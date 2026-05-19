@@ -1,0 +1,258 @@
+{
+  "name": "wedding-music-player",
+  "version": "1.0.0",
+  "description": "专业婚礼音乐播放器 - 支持音频播放、编辑、录音等功能",
+  "main": "dist-electron/index.js",
+  "scripts": {
+    "dev": "vite",
+    "dev:app": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-dev.ps1",
+    "dev:renderer": "vite",
+    "dev:main": "tsc -p tsconfig.main.json && electron .",
+    "build": "vite build",
+    "dist": "npm run clean && npm run build && electron-builder",
+    "dist:mac": "node scripts/ensure-ffmpeg-mac.js && npm run clean && npm run build && electron-builder --mac && node scripts/build-postprocess.js",
+    "dist:win": "node scripts/ensure-ffmpeg-win.js && npm run clean && npm run build && electron-builder --win",
+    "dist:win-installer": "node scripts/ensure-ffmpeg-win.js && npm run clean && npm run build && ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ electron-builder --win nsis --config.npmRebuild=false",
+    "rebuild:win": "electron-rebuild --platform=win32 --arch=x64 --version=28.3.3",
+    "postinstall": "electron-builder install-app-deps && electron-rebuild",
+    "install:ffmpeg": "sh install-ffmpeg.sh",
+    "install:ffmpeg:win": "node scripts/ensure-ffmpeg-win.js",
+    "clean": "node scripts/clean.js",
+    "postbuild": "node scripts/build-postprocess.js"
+  },
+  "keywords": [
+    "wedding",
+    "music",
+    "player",
+    "audio",
+    "electron"
+  ],
+  "author": "Wedding Music Player Team",
+  "license": "MIT",
+  "devDependencies": {
+    "@electron/rebuild": "^4.0.1",
+    "@rollup/plugin-commonjs": "^28.0.6",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/crypto-js": "^4.2.2",
+    "@types/node": "^20.0.0",
+    "@types/react": "^18.2.0",
+    "@types/react-beautiful-dnd": "^13.1.8",
+    "@types/react-dom": "^18.2.0",
+    "@types/react-toastify": "^4.1.0",
+    "@types/uuid": "^10.0.0",
+    "@vitejs/plugin-react": "^4.0.0",
+    "autoprefixer": "^10.4.0",
+    "concurrently": "^8.0.0",
+    "electron": "^28.3.3",
+    "electron-builder": "^24.13.3",
+    "electron-rebuild": "^3.2.9",
+    "postcss": "^8.4.0",
+    "tailwindcss": "^3.3.0",
+    "terser": "^5.44.0",
+    "typescript": "^5.0.0",
+    "vite": "^4.4.0",
+    "vite-plugin-electron": "^0.29.0",
+    "vite-plugin-electron-renderer": "^0.14.6",
+    "wait-on": "^7.0.0"
+  },
+  "dependencies": {
+    "@headlessui/react": "^1.7.0",
+    "@hello-pangea/dnd": "^18.0.1",
+    "@heroicons/react": "^2.2.0",
+    "better-sqlite3": "11.1.1",
+    "crypto-js": "^4.2.0",
+    "electron-store": "^8.1.0",
+    "lzma-native": "^8.0.6",
+    "music-metadata": "^11.8.3",
+    "react": "^18.2.0",
+    "react-beautiful-dnd": "^13.1.1",
+    "react-dom": "^18.2.0",
+    "react-dropzone": "^14.2.3",
+    "react-image-crop": "^11.0.10",
+    "react-toastify": "^10.0.5",
+    "uuid": "^12.0.0",
+    "wavesurfer.js": "^7.0.0",
+    "zustand": "^4.4.0"
+  },
+  "build": {
+    "appId": "com.yourcompany.weddingmusicplayer",
+    "productName": "Wedding Music Player",
+    "executableName": "WeddingMusicPlayer",
+    "asar": true,
+    "compression": "maximum",
+    "directories": {
+      "buildResources": "build",
+      "output": "release",
+      "app": "."
+    },
+    "npmRebuild": false,
+    "afterPack": "./scripts/afterpack.js",
+    "extraResources": [
+      {
+        "from": "resources/ffmpeg",
+        "to": "ffmpeg",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "resources/kugou_key.xz",
+        "to": "kugou_key.xz"
+      }
+    ],
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "public/**/*",
+      "resources/ffmpeg/**/*",
+      "!**/*.md",
+      "!**/README*",
+      "!**/CHANGELOG*",
+      "!dist-build{,/**/*}",
+      "!dist-build/**/*",
+      "!app{,/**/*}",
+      "!**/node_modules/**/{test,tests,__tests__}/**/*",
+      "!**/*.map"
+    ],
+    "mac": {
+      "category": "public.app-category.music",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ],
+      "icon": "public/app-icon.png",
+      "electronLanguages": [
+        "zh-CN",
+        "zh",
+        "en"
+      ],
+      "extraFiles": [
+        {
+          "from": "scripts/macos-fix.sh",
+          "to": "macos-fix.sh"
+        },
+        {
+          "from": "scripts/install.sh",
+          "to": "install.sh"
+        },
+        {
+          "from": "scripts/prelaunch-fix.sh",
+          "to": "prelaunch-fix.sh"
+        }
+      ],
+      "extendInfo": {
+        "LSUIElement": false,
+        "CFBundleDevelopmentRegion": "zh_CN",
+        "CFBundleLocalizations": [
+          "zh_CN",
+          "zh-Hans",
+          "zh",
+          "en"
+        ],
+        "NSMicrophoneUsageDescription": "艺语音乐播放器需要访问麦克风以进行音频录制功能",
+        "NSCameraUsageDescription": "艺语音乐播放器需要访问相机以进行视频录制功能",
+        "CFBundleDocumentTypes": [
+          {
+            "CFBundleTypeName": "Audio Files",
+            "CFBundleTypeRole": "Viewer",
+            "LSItemContentTypes": [
+              "public.audio"
+            ],
+            "LSHandlerRank": "Alternate"
+          }
+        ]
+      },
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
+    },
+    "dmg": {
+      "title": "Wedding Music Player",
+      "icon": "public/app-icon.png",
+      "contents": [
+        {
+          "x": 130,
+          "y": 180,
+          "type": "file"
+        },
+        {
+          "x": 410,
+          "y": 180,
+          "type": "link",
+          "path": "/Applications"
+        },
+        {
+          "x": 130,
+          "y": 320,
+          "type": "file",
+          "path": "scripts/macos-fix.sh",
+          "name": "macos-fix.sh"
+        },
+        {
+          "x": 410,
+          "y": 320,
+          "type": "file",
+          "path": "scripts/install.sh",
+          "name": "install.sh"
+        }
+      ],
+      "window": {
+        "width": 540,
+        "height": 480
+      },
+      "format": "UDZO"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
+      "icon": "public/app-icon.png",
+      "signAndEditExecutable": false,
+      "publisherName": "????",
+      "verifyUpdateCodeSignature": false,
+      "extraFiles": [
+        {
+          "from": "build/windows-launcher.bat",
+          "to": "艺语音乐播放器启动器.bat"
+        },
+        {
+          "from": "resources/ffmpeg",
+          "to": "ffmpeg",
+          "filter": [
+            "**/*"
+          ]
+        }
+      ],
+      "artifactName": "${productName}-${version}-${arch}.${ext}",
+      "asarUnpack": [
+        "**/node_modules/better-sqlite3/**/*",
+        "**/ffmpeg/**"
+      ],
+      "requestedExecutionLevel": "asInvoker"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "allowElevation": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "????",
+      "runAfterFinish": false,
+      "warningsAsErrors": false
+    }
+  }
+}
