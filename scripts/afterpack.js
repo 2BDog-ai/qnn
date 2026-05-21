@@ -4,50 +4,50 @@ const { execSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 
-/**
- * electron-builder afterPack 钩子
- * 用于在打包后设置FFmpeg的执行权限
- */
-exports.default = async function afterPack(context) {
-  console.log('🔧 afterPack: 开始设置FFmpeg权限...');
-  
-  const { electronPlatformName, appOutDir } = context;
-  
+function run(command) {
   try {
-    if (electronPlatformName === 'darwin') {
-      // macOS: 设置FFmpeg执行权限（位于 .app/Contents/Resources/ffmpeg/ffmpeg）
-      const appName = context.packager.appInfo.productFilename;
-      const appPath = path.join(appOutDir, `${appName}.app`);
-      const ffmpegPath = path.join(appPath, 'Contents', 'Resources', 'ffmpeg', 'ffmpeg');
-      
-      console.log('🔍 检查FFmpeg路径:', ffmpegPath);
-      
-      if (fs.existsSync(ffmpegPath)) {
-        console.log('✅ 找到FFmpeg文件，设置执行权限...');
-        execSync(`chmod +x "${ffmpegPath}"`, { stdio: 'inherit' });
-        console.log('✅ FFmpeg权限设置完成');
-        
-        // 验证权限
-        const stats = fs.statSync(ffmpegPath);
-        const permissions = (stats.mode & parseInt('777', 8)).toString(8);
-        console.log('🔍 FFmpeg权限验证:', permissions);
-      } else {
-        console.warn('⚠️ 未找到FFmpeg文件:', ffmpegPath);
-      }
-    } else if (electronPlatformName === 'win32') {
-      // Windows: 检查FFmpeg是否存在
-      const ffmpegPath = path.join(appOutDir, 'ffmpeg', 'ffmpeg.exe');
-      console.log('🔍 检查Windows FFmpeg路径:', ffmpegPath);
-      
-      if (fs.existsSync(ffmpegPath)) {
-        console.log('✅ Windows FFmpeg文件存在');
-      } else {
-        console.warn('⚠️ 未找到Windows FFmpeg文件:', ffmpegPath);
-      }
-    }
+    execSync(command, { stdio: 'inherit' });
+    return true;
   } catch (error) {
-    console.error('❌ afterPack设置FFmpeg权限失败:', error);
+    console.warn(`Command failed: ${command}`);
+    return false;
   }
-  
-  console.log('🔧 afterPack: FFmpeg权限设置完成');
+}
+
+exports.default = async function afterPack(context) {
+  const { electronPlatformName, appOutDir } = context;
+  console.log(`afterPack started for ${electronPlatformName}`);
+
+  if (electronPlatformName === 'darwin') {
+    const appName = context.packager.appInfo.productFilename;
+    const appPath = path.join(appOutDir, `${appName}.app`);
+    const ffmpegPath = path.join(appPath, 'Contents', 'Resources', 'ffmpeg', 'ffmpeg');
+
+    if (fs.existsSync(ffmpegPath)) {
+      run(`chmod +x "${ffmpegPath}"`);
+    } else {
+      console.warn(`FFmpeg not found: ${ffmpegPath}`);
+    }
+
+    if (fs.existsSync(appPath)) {
+      run(`xattr -cr "${appPath}"`);
+      run(`xattr -dr com.apple.quarantine "${appPath}"`);
+      run(`chmod -R +x "${path.join(appPath, 'Contents', 'MacOS')}"`);
+      run(`find "${appPath}" -name "*.dylib" -exec chmod 755 {} \\;`);
+      run(`codesign --force --deep --sign - "${appPath}"`);
+    } else {
+      console.warn(`App bundle not found: ${appPath}`);
+    }
+  }
+
+  if (electronPlatformName === 'win32') {
+    const ffmpegPath = path.join(appOutDir, 'ffmpeg', 'ffmpeg.exe');
+    if (fs.existsSync(ffmpegPath)) {
+      console.log(`Windows FFmpeg found: ${ffmpegPath}`);
+    } else {
+      console.warn(`Windows FFmpeg not found: ${ffmpegPath}`);
+    }
+  }
+
+  console.log('afterPack completed.');
 };

@@ -38,8 +38,5 @@ jobs:
         with:
           name: Wedding-Music-Player-macOS-arm64
           path: |
-            release/*.dmg
-            release/*.zip
-            release/*安装说明.txt
-            release/*修复工具.sh
+            release/*
           if-no-files-found: error

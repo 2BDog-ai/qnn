@@ -139,11 +139,11 @@
       "extraFiles": [
         {
           "from": "scripts/macos-fix.sh",
-          "to": "macos-fix.sh"
+          "to": "macOS一键修复.command"
         },
         {
           "from": "scripts/install.sh",
-          "to": "install.sh"
+          "to": "macOS安装并修复.command"
         },
         {
           "from": "scripts/prelaunch-fix.sh",
@@ -194,14 +194,14 @@
           "y": 320,
           "type": "file",
           "path": "scripts/macos-fix.sh",
-          "name": "macos-fix.sh"
+          "name": "macOS一键修复.command"
         },
         {
           "x": 410,
           "y": 320,
           "type": "file",
           "path": "scripts/install.sh",
-          "name": "install.sh"
+          "name": "macOS安装并修复.command"
         }
       ],
       "window": {
