@@ -60,7 +60,7 @@ copy_from_dmg_if_needed() {
     local source_app="$SCRIPT_DIR/$name"
     if [[ -d "$source_app" && "$source_app" == /Volumes/* ]]; then
       local target_app="/Applications/$name"
-      info "检测到应用还在 DMG 中，正在复制到 /Applications..."
+      printf '%s\n' "检测到应用还在 DMG 中，正在复制到 /Applications..." >&2
       rm -rf "$target_app" 2>/dev/null || sudo rm -rf "$target_app"
       cp -R "$source_app" "$target_app" 2>/dev/null || sudo cp -R "$source_app" "$target_app"
       printf '%s\n' "$target_app"
