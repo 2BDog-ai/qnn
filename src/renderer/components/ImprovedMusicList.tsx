@@ -8,6 +8,12 @@ const TrimmedIcon = ({ className, title }: { className?: string; title?: string 
     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.121 14.121L19 19m-7-7l7-7m-7 7l-2.879 2.879M12 12L9.121 9.121m0 5.758a3 3 0 10-4.243 4.243 3 3 0 004.243-4.243zm0-5.758a3 3 0 10-4.243-4.243 3 3 0 004.243 4.243z" />
   </svg>
 );
+
+const buildAudioEditorHash = (musicId: string, playlistId?: string) => {
+  const base = `#/audio-editor/${encodeURIComponent(musicId)}`;
+  return playlistId ? `${base}?playlistId=${encodeURIComponent(playlistId)}` : base;
+};
+
 import {
   PlayIcon,
   PauseIcon,
@@ -19,8 +25,7 @@ import {
   ShareIcon,
   DeleteIcon,
   EditIcon,
-  PlusIcon,
-  LocateIcon
+  PlusIcon
 } from './icons/AudioIcons';
 
 interface MusicFile {
@@ -39,7 +44,6 @@ interface MusicFile {
   file: File;
 }
 
-type SortField = 'name' | 'artist' | 'duration' | 'addedTime' | 'manual';
 interface ImprovedMusicListProps {
   musicFiles: MusicFile[];
   currentMusic: MusicFile | null;
@@ -53,10 +57,7 @@ interface ImprovedMusicListProps {
   onRemoveFromPlaylist?: (musicId: string, playlistId: string) => void;
   playlists?: any[];
   currentPlaylistId?: string;
-  sortBy: SortField | 'manual';
-  sortOrder: 'asc' | 'desc';
-  onSortChange: (field: SortField, order: 'asc' | 'desc') => void;
-  onReorder?: (ids: string[]) => void;
+  onReorder?: (ids: string[]) => void | Promise<void>;
   highlightedId?: string | null;
   onImportFiles?: (files: File[]) => void;
   // 鎵嬪姩鎺掑簭鐩稿叧锛堥儴鍒嗚皟鐢ㄦ柟浼氫紶鍏ワ級
@@ -79,9 +80,6 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
   onRemoveFromPlaylist,
   playlists = [],
   currentPlaylistId,
-  sortBy,
-  sortOrder,
-  onSortChange,
   onReorder,
   highlightedId,
   onImportFiles,
@@ -104,8 +102,7 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
     console.log('contextMenuId 鐘舵€佸彉鍖?', contextMenuId);
   }, [contextMenuId]);
   const [isDragOver, setIsDragOver] = useState(false);
-  const [dragInsertIndex, setDragInsertIndex] = useState<number | null>(null);
-  const dragUpdateTimer = React.useRef<number | null>(null);
+  const dragInsertIndexRef = useRef<number | null>(null);
   const longPressTimerRef = useRef<NodeJS.Timeout | null>(null);
   const longPressTriggeredRef = useRef(false);
   const isSortingDragRef = useRef(false);
@@ -152,8 +149,8 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
         const rect = isDocumentScroller
           ? { top: 0, bottom: window.innerHeight }
           : scrollTarget.getBoundingClientRect();
-        const edgeSize = 110;
-        const maxSpeed = 34;
+        const edgeSize = 150;
+        const maxSpeed = 52;
         let deltaY = 0;
 
         if (pointer.y < rect.top + edgeSize) {
@@ -255,46 +252,18 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
   };
 
 
-  // 鎺掑簭闊充箰鍒楄〃
   const sortedMusicFiles = useMemo(() => {
-    if (sortBy === 'manual') {
-      return musicFiles;
-    }
-    const sorted = [...musicFiles].sort((a, b) => {
-      let compareValue = 0;
-      switch (sortBy) {
-        case 'name':
-          compareValue = a.name.localeCompare(b.name);
-          break;
-        case 'artist':
-          compareValue = (a.artist || '').localeCompare(b.artist || '');
-          break;
-        case 'duration':
-          compareValue = (a.duration || 0) - (b.duration || 0);
-          break;
-        case 'addedTime':
-          compareValue = a.addedTime.getTime() - b.addedTime.getTime();
-          break;
-      }
-      return sortOrder === 'asc' ? compareValue : -compareValue;
-    });
-    return sorted;
-  }, [musicFiles, sortBy, sortOrder]);
+    return musicFiles;
+  }, [musicFiles]);
 
   const handleDragEnd = (result: DropResult) => {
-    setDragInsertIndex(null);
-    if (dragUpdateTimer.current) {
-      window.clearTimeout(dragUpdateTimer.current);
-      dragUpdateTimer.current = null;
-    }
-
     if (!result.destination) return;
     if (result.destination.index === result.source.index) return;
 
     const reordered = Array.from(sortedMusicFiles);
     const [removed] = reordered.splice(result.source.index, 1);
     reordered.splice(result.destination.index, 0, removed);
-    if (onReorder) onReorder(reordered.map(m => m.id));
+    if (onReorder) void onReorder(reordered.map(m => m.id));
   };
 
   const cleanupGridDrag = () => {
@@ -303,7 +272,7 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
     gridDragSourceIndexRef.current = null;
     gridDragSourceIdRef.current = null;
     setGridDraggingId(null);
-    setDragInsertIndex(null);
+    dragInsertIndexRef.current = null;
   };
 
   const handleGridDragStart = (event: React.DragEvent<HTMLDivElement>, music: MusicFile, index: number) => {
@@ -311,16 +280,13 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
     gridDragSourceIndexRef.current = index;
     gridDragSourceIdRef.current = music.id;
     setGridDraggingId(music.id);
-    setDragInsertIndex(index);
+    dragInsertIndexRef.current = index;
     dragPointerRef.current = { x: event.clientX, y: event.clientY };
     document.body.style.userSelect = 'none';
     event.dataTransfer.effectAllowed = 'move';
     event.dataTransfer.setData('application/x-wedding-music-id', music.id);
     event.dataTransfer.setData('text/plain', music.id);
     startSortingAutoScroll(music.id);
-    if (!isManualSortMode && onStartManualSort) {
-      onStartManualSort();
-    }
   };
 
   const getGridInsertionIndex = (clientX: number, clientY: number) => {
@@ -401,7 +367,7 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
     event.stopPropagation();
     event.dataTransfer.dropEffect = 'move';
     dragPointerRef.current = { x: event.clientX, y: event.clientY };
-    setDragInsertIndex(getGridInsertionIndex(event.clientX, event.clientY));
+    dragInsertIndexRef.current = getGridInsertionIndex(event.clientX, event.clientY);
   };
 
   const handleGridContainerDragOver = (event: React.DragEvent<HTMLDivElement>) => {
@@ -410,7 +376,7 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
     event.stopPropagation();
     event.dataTransfer.dropEffect = 'move';
     dragPointerRef.current = { x: event.clientX, y: event.clientY };
-    setDragInsertIndex(getGridInsertionIndex(event.clientX, event.clientY));
+    dragInsertIndexRef.current = getGridInsertionIndex(event.clientX, event.clientY);
   };
 
   const handleGridDrop = (event: React.DragEvent<HTMLDivElement>) => {
@@ -422,7 +388,7 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
     const sourceIndex = sourceId
       ? sortedMusicFiles.findIndex((music) => music.id === sourceId)
       : fallbackSourceIndex;
-    const rawDestinationIndex = dragInsertIndex;
+    const rawDestinationIndex = dragInsertIndexRef.current;
 
     if (sourceIndex === null || sourceIndex < 0 || rawDestinationIndex === null) {
       cleanupGridDrag();
@@ -437,7 +403,7 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
 
     if (removed && destinationIndex !== sourceIndex) {
       reordered.splice(destinationIndex, 0, removed);
-      if (onReorder) onReorder(reordered.map(m => m.id));
+      if (onReorder) void onReorder(reordered.map(m => m.id));
     }
 
     cleanupGridDrag();
@@ -471,14 +437,6 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
       setSelectedIds(newSet);
     } else {
       setSelectedIds(new Set([id]));
-    }
-  };
-
-  const handleSort = (field: SortField) => {
-    if (sortBy === field) {
-      onSortChange(field, sortOrder === 'asc' ? 'desc' : 'asc');
-    } else {
-      onSortChange(field, 'asc');
     }
   };
 
@@ -585,37 +543,6 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
           </div>
         )}
         
-        {/* 鎵嬪姩鎺掑簭鎺у埗鏍?*/}
-        {isManualSortMode && (
-          <div className="mb-4 bg-blue-50 border-l-4 border-blue-500 p-4 rounded-r-lg">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center space-x-3">
-                <svg className="w-6 h-6 text-blue-600 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" />
-                </svg>
-                <div>
-                  <h3 className="text-sm font-semibold text-blue-900">手动排序模式</h3>
-                  <p className="text-xs text-blue-700">拖拽卡片重新排序，完成后点击"保存排序"。</p>
-                </div>
-              </div>
-              <div className="flex items-center space-x-2">
-                <button
-                  onClick={onCancelManualSort}
-                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
-                >
-                  取消
-                </button>
-                <button
-                  onClick={onFinishManualSort}
-                  className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors shadow-sm"
-                >
-                  保存排序
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
         {/* 宸ュ叿鏍?*/}
         <div className="mb-6 flex items-center justify-between">
           <div className="flex items-center space-x-4">
@@ -626,29 +553,6 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
               <span className="text-sm text-blue-600">
                 已选中 {selectedIds.size} 项
               </span>
-            )}
-          </div>
-          <div className="flex items-center space-x-2">
-            {/* 鑷姩鎺掑簭涓嬫媺鑿滃崟 - 鍙湪闈炴墜鍔ㄦ帓搴忔ā寮忔樉绀?*/}
-            {!isManualSortMode && (
-              <select
-                value={sortBy === 'manual' ? 'addedTime-desc' : `${sortBy}-${sortOrder}`}
-                onChange={(e) => {
-                  const value = e.target.value;
-                  const [field, order] = value.split('-');
-                  onSortChange(field as SortField, order as typeof sortOrder);
-                }}
-                className="text-sm bg-white border border-gray-300 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="addedTime-desc">添加时间（新到旧）</option>
-                <option value="addedTime-asc">添加时间（旧到新）</option>
-                <option value="name-asc">名称（A-Z）</option>
-                <option value="name-desc">名称（Z-A）</option>
-                <option value="artist-asc">歌手（A-Z）</option>
-                <option value="artist-desc">歌手（Z-A）</option>
-                <option value="duration-asc">时长（短到长）</option>
-                <option value="duration-desc">时长（长到短）</option>
-              </select>
             )}
           </div>
         </div>
@@ -676,10 +580,6 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
           >
             {sortedMusicFiles.map((music, index) => (
               <div key={music.id} className="relative">
-                      {/* 鎻掑叆鎸囩ず鍣?*/}
-                      {dragInsertIndex === index && (
-                        <div className="absolute -left-1 top-0 bottom-0 w-[2px] bg-blue-500 z-[9999]" />
-                      )}
                         <div
                           id={`music-item-${music.id}`}
                           draggable
@@ -840,7 +740,7 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
                                     console.log('点击剪辑按钮，音乐ID:', music.id);
                                     setContextMenuId(null);
                                     setTimeout(() => {
-                                      const targetHash = `#/audio-editor/${music.id}`;
+                                      const targetHash = buildAudioEditorHash(music.id, currentPlaylistId);
                                       console.log('设置hash:', targetHash);
                                       window.location.hash = targetHash;
                                     }, 100);
@@ -893,12 +793,6 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
                     </div>
                   ))}
                   
-                  {/* 鏈熬鎻掑叆鎸囩ず鍣?*/}
-                  {dragInsertIndex === sortedMusicFiles.length && (
-                    <div className="relative">
-                      <div className="absolute -left-1 top-0 bottom-0 w-1 bg-blue-500 rounded-full shadow-lg z-50 animate-pulse" />
-                    </div>
-                  )}
           </div>
         )}
       </div>
@@ -927,66 +821,12 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
         </div>
       )}
       
-      {/* 鎵嬪姩鎺掑簭鎺у埗鏍?*/}
-      {isManualSortMode && (
-        <div className="mx-6 mt-4 bg-blue-50 border-l-4 border-blue-500 p-4 rounded-r-lg">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-3">
-              <svg className="w-6 h-6 text-blue-600 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" />
-              </svg>
-              <div>
-                <h3 className="text-sm font-semibold text-blue-900">手动排序模式</h3>
-                <p className="text-xs text-blue-700">拖拽歌曲重新排序，完成后点击"保存排序"。</p>
-              </div>
-            </div>
-            <div className="flex items-center space-x-2">
-              <button
-                onClick={onCancelManualSort}
-                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
-              >
-                取消
-              </button>
-              <button
-                onClick={onFinishManualSort}
-                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors shadow-sm"
-              >
-                保存排序
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* 宸ュ叿鏍?*/}
       <div className="px-6 py-3 flex items-center justify-between border-b border-gray-200 bg-gray-50">
         <div className="flex items-center space-x-4 text-sm text-gray-600">
           <span>共 {musicFiles.length} 首歌曲</span>
           {selectedIds.size > 0 && (
             <span className="text-blue-600">已选中 {selectedIds.size} 项</span>
-          )}
-        </div>
-        <div className="flex items-center space-x-2">
-          {/* 鑷姩鎺掑簭涓嬫媺鑿滃崟 - 鍙湪闈炴墜鍔ㄦ帓搴忔ā寮忔樉绀?*/}
-          {!isManualSortMode && (
-            <select
-              value={sortBy === 'manual' ? 'addedTime-desc' : `${sortBy}-${sortOrder}`}
-              onChange={(e) => {
-                const value = e.target.value;
-                const [field, order] = value.split('-');
-                onSortChange(field as SortField, order as typeof sortOrder);
-              }}
-              className="text-sm bg-white border border-gray-300 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <option value="addedTime-desc">添加时间（新到旧）</option>
-              <option value="addedTime-asc">添加时间（旧到新）</option>
-              <option value="name-asc">名称（A-Z）</option>
-              <option value="name-desc">名称（Z-A）</option>
-              <option value="artist-asc">歌手（A-Z）</option>
-              <option value="artist-desc">歌手（Z-A）</option>
-              <option value="duration-asc">时长（短到长）</option>
-              <option value="duration-desc">时长（长到短）</option>
-            </select>
           )}
         </div>
       </div>
@@ -996,33 +836,15 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
         <div className="flex items-center text-sm text-gray-600">
           {/* 绉婚櫎鍏ㄩ€夊閫夋 */}
           <div className="w-12">#</div>
-          <div 
-            className="flex-1 flex items-center cursor-pointer hover:text-gray-900"
-            onClick={() => handleSort('name')}
-          >
+          <div className="flex-1 flex items-center">
             标题
-            {sortBy === 'name' && (
-              <span className="ml-1">{sortOrder === 'asc' ? '^' : 'v'}</span>
-            )}
           </div>
-          <div 
-            className="w-48 flex items-center cursor-pointer hover:text-gray-900"
-            onClick={() => handleSort('artist')}
-          >
+          <div className="w-48 flex items-center">
             歌手
-            {sortBy === 'artist' && (
-              <span className="ml-1">{sortOrder === 'asc' ? '^' : 'v'}</span>
-            )}
           </div>
           <div className="w-48">专辑</div>
-          <div 
-            className="w-24 flex items-center cursor-pointer hover:text-gray-900"
-            onClick={() => handleSort('duration')}
-          >
+          <div className="w-24 flex items-center">
             时长
-            {sortBy === 'duration' && (
-              <span className="ml-1">{sortOrder === 'asc' ? '^' : 'v'}</span>
-            )}
           </div>
           <div className="w-20">格式</div>
           <div className="w-24">大小</div>
@@ -1054,18 +876,9 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
             stopSortingAutoScroll();
             handleDragEnd(result);
           }}
-          onDragUpdate={(update) => {
-            if (update.destination) {
-              setDragInsertIndex(update.destination.index);
-            }
-          }}
           onDragStart={(start) => {
-            setDragInsertIndex(null);
             document.body.style.userSelect = 'none';
             startSortingAutoScroll(start.draggableId);
-            if (!isManualSortMode && onStartManualSort) {
-              onStartManualSort();
-            }
           }}
         >
           <Droppable droppableId="music-list">
@@ -1077,10 +890,6 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
                 id="music-scroll-container"
               >
                 {sortedMusicFiles.map((music, index) => (
-                  <div key={`row-${music.id}`}>
-                    {dragInsertIndex === index && (
-                      <div className="h-[2px] bg-blue-500 z-[9999] mx-6" />
-                    )}
                   <Draggable key={music.id} draggableId={music.id} index={index}>
                       {(dragProvided, dragSnapshot) => (
                       <div
@@ -1248,7 +1057,7 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
                                       console.log('点击剪辑按钮，音乐ID:', music.id);
                                       setContextMenuId(null);
                                       setTimeout(() => {
-                                        const targetHash = `#/audio-editor/${music.id}`;
+                                        const targetHash = buildAudioEditorHash(music.id, currentPlaylistId);
                                         console.log('设置hash:', targetHash);
                                         window.location.hash = targetHash;
                                       }, 100);
@@ -1282,13 +1091,7 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
                       </div>
                     )}
                   </Draggable>
-                  </div>
                 ))}
-                
-                {/* 鏈熬鎻掑叆鎸囩ず鍣?*/}
-                {dragInsertIndex === sortedMusicFiles.length && (
-                  <div className="h-[2px] bg-blue-500 z-[9999] mx-6" />
-                )}
                 
                 {provided.placeholder}
               </div>

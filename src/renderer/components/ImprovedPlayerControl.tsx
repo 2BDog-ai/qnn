@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import {
   PlayIcon,
   PauseIcon,
@@ -23,11 +23,9 @@ interface ImprovedPlayerControlProps {
   isDragging: boolean;
   isHovering: boolean;
   dragTime: number;
-  isFadeEnabled: boolean;
-  fadeInDuration: number;
-  fadeOutDuration: number;
   currentPlayingPlaylist?: any; // 当前播放的歌单信息
   onTogglePlayPause: () => void;
+  onRestartCurrent: () => void;
   onStop: () => void;
   onPrevious: () => void;
   onNext: () => void;
@@ -39,9 +37,6 @@ interface ImprovedPlayerControlProps {
   onSliderMouseDown: (e: React.MouseEvent<HTMLDivElement>) => void;
   onProgressBarMouseEnter: () => void;
   onProgressBarMouseLeave: () => void;
-  onToggleFade: () => void;
-  onFadeInDurationChange: (duration: number) => void;
-  onFadeOutDurationChange: (duration: number) => void;
   progressBarRef: React.RefObject<HTMLDivElement>;
 }
 
@@ -55,11 +50,9 @@ export const ImprovedPlayerControl: React.FC<ImprovedPlayerControlProps> = ({
   isDragging,
   isHovering,
   dragTime,
-  isFadeEnabled,
-  fadeInDuration,
-  fadeOutDuration,
   currentPlayingPlaylist,
   onTogglePlayPause,
+  onRestartCurrent,
   onStop,
   onPrevious,
   onNext,
@@ -71,26 +64,47 @@ export const ImprovedPlayerControl: React.FC<ImprovedPlayerControlProps> = ({
   onSliderMouseDown,
   onProgressBarMouseEnter,
   onProgressBarMouseLeave,
-  onToggleFade,
-  onFadeInDurationChange,
-  onFadeOutDurationChange,
   progressBarRef
 }) => {
+  const playButtonClickTimerRef = useRef<number | null>(null);
+
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
     const secs = Math.floor(seconds % 60);
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
-  const formatDuration = (ms: number) => {
-    return `${(ms / 1000).toFixed(1)}s`;
+  useEffect(() => {
+    return () => {
+      if (playButtonClickTimerRef.current !== null) {
+        window.clearTimeout(playButtonClickTimerRef.current);
+      }
+    };
+  }, []);
+
+  const handlePlayButtonClick = () => {
+    if (playButtonClickTimerRef.current !== null) return;
+
+    playButtonClickTimerRef.current = window.setTimeout(() => {
+      onTogglePlayPause();
+      playButtonClickTimerRef.current = null;
+    }, 220);
+  };
+
+  const handlePlayButtonDoubleClick = (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    if (playButtonClickTimerRef.current !== null) {
+      window.clearTimeout(playButtonClickTimerRef.current);
+      playButtonClickTimerRef.current = null;
+    }
+    onRestartCurrent();
   };
 
   if (!currentMusic) return null;
 
   return (
     <div className="bg-gray-100 dark:bg-gradient-to-r dark:from-gray-900 dark:via-gray-800 dark:to-gray-900 text-gray-900 dark:text-white px-8 py-6 shadow-2xl">
-      {/* 顶部区域：歌曲信息和渐强渐弱控制 */}
+      {/* 顶部区域：歌曲信息 */}
       <div className="flex items-center justify-between mb-6">
         {/* 歌曲信息 */}
         <div className="flex items-center space-x-4 flex-1">
@@ -118,61 +132,6 @@ export const ImprovedPlayerControl: React.FC<ImprovedPlayerControlProps> = ({
           </div>
         </div>
 
-        {/* 渐强渐弱控制 */}
-        <div className="flex items-center space-x-4">
-          {/* 现有渐强渐弱 */}
-          <div className="flex items-center space-x-6 bg-gray-200/50 dark:bg-gray-800/50 rounded-lg px-4 py-2">
-            <div className="flex items-center space-x-2">
-              <label className="text-xs text-gray-600 dark:text-gray-400">渐强渐弱</label>
-              <button
-                onClick={onToggleFade}
-                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 ${
-                  isFadeEnabled ? 'bg-blue-600' : 'bg-gray-400 dark:bg-gray-600'
-                }`}
-              >
-                <span
-                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                    isFadeEnabled ? 'translate-x-6' : 'translate-x-1'
-                  }`}
-                />
-              </button>
-            </div>
-            
-            {isFadeEnabled && (
-              <>
-                <div className="flex items-center space-x-2">
-                  <label className="text-xs text-gray-400">渐入</label>
-                  <select
-                    value={fadeInDuration}
-                    onChange={(e) => onFadeInDurationChange(Number(e.target.value))}
-                    className="bg-gray-300 dark:bg-gray-700 text-gray-900 dark:text-white text-xs rounded px-2 py-1 border border-gray-400 dark:border-gray-600 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50"
-                  >
-                    <option value={1000}>1秒</option>
-                    <option value={2000}>2秒</option>
-                    <option value={3000}>3秒</option>
-                    <option value={5000}>5秒</option>
-                    <option value={8000}>8秒</option>
-                  </select>
-                </div>
-                
-                <div className="flex items-center space-x-2">
-                  <label className="text-xs text-gray-400">渐出</label>
-                  <select
-                    value={fadeOutDuration}
-                    onChange={(e) => onFadeOutDurationChange(Number(e.target.value))}
-                    className="bg-gray-300 dark:bg-gray-700 text-gray-900 dark:text-white text-xs rounded px-2 py-1 border border-gray-400 dark:border-gray-600 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50"
-                  >
-                    <option value={1000}>1秒</option>
-                    <option value={2000}>2秒</option>
-                    <option value={3000}>3秒</option>
-                    <option value={5000}>5秒</option>
-                    <option value={8000}>8秒</option>
-                  </select>
-                </div>
-              </>
-            )}
-          </div>
-        </div>
       </div>
 
       {/* 进度条 */}
@@ -261,9 +220,10 @@ export const ImprovedPlayerControl: React.FC<ImprovedPlayerControlProps> = ({
           </button>
            
           <button 
-            onClick={onTogglePlayPause}
+            onClick={handlePlayButtonClick}
+            onDoubleClick={handlePlayButtonDoubleClick}
             className="relative p-4 bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white rounded-full transition-all transform hover:scale-105 shadow-xl group focus:outline-none focus:ring-2 focus:ring-blue-300 focus:ring-opacity-75"
-            title={isPlaying ? "暂停" : "播放"}
+            title={isPlaying ? "暂停（双击从头播放）" : "播放（双击从头播放）"}
           >
             <div className="absolute inset-0 bg-white/20 rounded-full animate-ping" />
             {isPlaying ? (

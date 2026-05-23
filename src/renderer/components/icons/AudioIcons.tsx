@@ -1027,12 +1027,3 @@ export const CheckIcon: React.FC<{ className?: string; size?: number }> = ({ cla
     <polyline points="20 6 9 17 4 12" />
   </svg>
 );
-
-// Locate/Target Icon (定位图标)
-export const LocateIcon: React.FC<{ className?: string; size?: number }> = ({ className = "", size = 24 }) => (
-  <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <circle cx="12" cy="12" r="3" />
-    <path d="M12 1v6m0 6v6" />
-    <path d="M21 12h-6m-6 0H3" />
-  </svg>
-);

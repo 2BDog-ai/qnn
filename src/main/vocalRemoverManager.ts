@@ -988,42 +988,44 @@ class VocalRemoverManager {
    */
   private buildKaraokeFilter(options: VocalRemovalOptions): string {
     const quality = options.quality || 'high';
-    
+
     if (quality === 'ultra') {
-      // 超高质量：使用简单滤镜链，避免复杂的分支
+      // 温和削弱人声频段，保留原始立体声和大部分伴奏。
       return [
-        'pan=mono|c0=0.5*c0-0.5*c1',  // 立体声相位消除
-        'highpass=f=60:poles=2',  // 保留低音
-        'lowpass=f=18000:poles=2',  // 保留高频
-        'equalizer=f=200:t=q:w=1:g=4',  // 增强低频
-        'equalizer=f=500:t=q:w=1.5:g=2',  // 增强中低频
-        'equalizer=f=1200:t=q:w=3:g=-8',  // 削减人声主频
-        'equalizer=f=2800:t=q:w=3:g=-10',  // 削减人声高频
-        'equalizer=f=5000:t=q:w=2:g=-4',  // 削减人声泛音
-        'equalizer=f=10000:t=q:w=1.5:g=3',  // 增强高频细节
-        'acompressor=threshold=0.12:ratio=8:attack=3:release=40:makeup=3',  // 强压缩
-        'alimiter=limit=0.98:attack=3:release=40',  // 限幅
-        'volume=1.5'  // 提升音量
+        'highpass=f=35:poles=2',
+        'lowpass=f=19000:poles=2',
+        'equalizer=f=220:t=q:w=1.2:g=2',
+        'equalizer=f=450:t=q:w=1.4:g=1.5',
+        'equalizer=f=900:t=q:w=2.2:g=-3',
+        'equalizer=f=1500:t=q:w=2.4:g=-5',
+        'equalizer=f=2600:t=q:w=2.6:g=-6',
+        'equalizer=f=3800:t=q:w=2.2:g=-4',
+        'equalizer=f=9000:t=q:w=1.4:g=1.5',
+        'acompressor=threshold=0.18:ratio=2.5:attack=8:release=80:makeup=1.5',
+        'alimiter=limit=0.98:attack=5:release=60'
       ].join(',');
     } else if (quality === 'high') {
       return [
-        'pan=mono|c0=0.5*c0-0.5*c1',  // 立体声相位消除
-        'highpass=f=80:poles=2',
-        'lowpass=f=16000:poles=2',
-        'equalizer=f=1200:t=q:w=2.5:g=-6',
-        'equalizer=f=2800:t=q:w=2.5:g=-7',
-        'acompressor=threshold=0.2:ratio=5:attack=5:release=50:makeup=2',
-        'volume=1.3'
+        'highpass=f=35:poles=2',
+        'lowpass=f=18000:poles=2',
+        'equalizer=f=250:t=q:w=1.2:g=1.5',
+        'equalizer=f=1100:t=q:w=2:g=-3',
+        'equalizer=f=1800:t=q:w=2.2:g=-4.5',
+        'equalizer=f=3000:t=q:w=2.4:g=-5',
+        'equalizer=f=4200:t=q:w=2:g=-3',
+        'acompressor=threshold=0.2:ratio=2.2:attack=10:release=80:makeup=1',
+        'alimiter=limit=0.98'
       ].join(',');
     } else if (quality === 'medium') {
       return [
-        'pan=mono|c0=0.5*c0-0.5*c1',
-        'highpass=f=100:poles=2',
-        'equalizer=f=1500:t=q:w=2:g=-5',
-        'acompressor=threshold=0.3:ratio=3:attack=10:release=60'
+        'highpass=f=40:poles=2',
+        'lowpass=f=17000:poles=2',
+        'equalizer=f=1300:t=q:w=2:g=-2.5',
+        'equalizer=f=2600:t=q:w=2.2:g=-3.5',
+        'alimiter=limit=0.98'
       ].join(',');
     } else {
-      return 'pan=mono|c0=0.5*c0-0.5*c1,highpass=f=120:poles=2';
+      return 'highpass=f=45:poles=2,lowpass=f=16000:poles=2,equalizer=f=1800:t=q:w=2:g=-2.5,alimiter=limit=0.98';
     }
   }
 

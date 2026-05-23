@@ -30,9 +30,6 @@ export class ShortcutManager {
     
     this.registerShortcut('VolumeMute', () => this.sendToRenderer('player:toggleMute'));
     
-    // 音量控制
-    this.registerShortcut('CommandOrControl+Up', () => this.sendToRenderer('player:fadeIn'));
-    this.registerShortcut('CommandOrControl+Down', () => this.sendToRenderer('player:fadeOut'));
     this.registerShortcut('CommandOrControl+M', () => this.sendToRenderer('player:toggleMute'));
     
     // 手卡快捷键（F1-F12）

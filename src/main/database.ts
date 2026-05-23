@@ -322,8 +322,8 @@ export class DatabaseManager {
       INSERT OR REPLACE INTO music_files (
         id, name, artist, album, duration, file_size, format, is_favorite,
         add_time, file_path, file_name, display_name, bitrate, sample_rate,
-        last_play_time, play_count, custom_tags, thumbnail_path
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        last_play_time, play_count, custom_tags, thumbnail_path, is_trimmed
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     // 标准化文件路径，确保 Windows 路径正确处理
@@ -347,7 +347,8 @@ export class DatabaseManager {
       musicFile.lastPlayTime?.toISOString() || null,
       musicFile.playCount || 0,
       JSON.stringify(musicFile.customTags || []),
-      musicFile.thumbnailPath || null
+      musicFile.thumbnailPath || null,
+      musicFile.isTrimmed ? 1 : 0
     );
   }
 

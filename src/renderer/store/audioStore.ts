@@ -36,8 +36,6 @@ interface AudioState {
     stop: () => void;
     seek: (time: number) => void;
     setVolume: (volume: number) => void;
-    fadeIn: (duration: number) => void;
-    fadeOut: (duration: number) => void;
     next: () => void;
     previous: () => void;
     setPlayMode: (mode: PlayMode) => void;
@@ -83,9 +81,7 @@ export const useAudioStore = create<AudioState>()(
       currentTime: 0,
       volume: 0.7,
       playMode: PlayMode.NORMAL,
-      isMuted: false,
-      fadeInDuration: 2,
-      fadeOutDuration: 2
+      isMuted: false
     },
     currentAudio: null,
     currentPlaylist: null,
@@ -149,24 +145,6 @@ export const useAudioStore = create<AudioState>()(
           playbackState: { 
             ...state.playbackState, 
             volume: Math.max(0, Math.min(1, volume))
-          }
-        }));
-      },
-      
-      fadeIn: (duration) => {
-        set(state => ({
-          playbackState: { 
-            ...state.playbackState, 
-            fadeInDuration: duration 
-          }
-        }));
-      },
-      
-      fadeOut: (duration) => {
-        set(state => ({
-          playbackState: { 
-            ...state.playbackState, 
-            fadeOutDuration: duration 
           }
         }));
       },
@@ -645,4 +623,3 @@ export const useAudioStore = create<AudioState>()(
     }
   }))
 );
-

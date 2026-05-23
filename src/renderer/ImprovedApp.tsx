@@ -20,7 +20,7 @@ import { Dialog, Transition } from '@headlessui/react';
 // @ts-ignore
 // import CryptoJS from 'crypto-js'; // Remove this
 // 移除 import { MoonIcon, SunIcon } from './components/icons/AudioIcons';
-import { ShareIcon, CheckCircleIcon, LocateIcon } from './components/icons/AudioIcons';
+import { ShareIcon, CheckCircleIcon } from './components/icons/AudioIcons';
 import { ToastContainer, toast } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 import ReactCrop, { Crop, PixelCrop, PercentCrop, centerCrop, makeAspectCrop } from 'react-image-crop';
@@ -83,6 +83,7 @@ function ImprovedApp() {
   const [activeModule, setActiveModule] = useState('music-playback');
   const [activeView, setActiveView] = useState(''); // 初始为空，等待默认歌单加载
   const [audioEditorMusicId, setAudioEditorMusicId] = useState<string | null>(null); 
+  const [audioEditorPlaylistId, setAudioEditorPlaylistId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'list' | 'grid'>(() => {
     try {
       const saved = localStorage.getItem('wedding-music-player-view-mode');
@@ -92,6 +93,16 @@ function ImprovedApp() {
       return 'list';
     }
   });
+
+  const parseAudioEditorHash = (hash: string) => {
+    const route = hash.replace(/^#\/audio-editor\/?/, '');
+    const [encodedMusicId, query = ''] = route.split('?');
+    const params = new URLSearchParams(query);
+    return {
+      musicId: encodedMusicId ? decodeURIComponent(encodedMusicId) : null,
+      playlistId: params.get('playlistId')
+    };
+  };
 
   // 播放列表级别的排序状态管理
   const [playlistSortStates, setPlaylistSortStates] = useState<Record<string, {
@@ -270,11 +281,6 @@ function ImprovedApp() {
   };
 
 
-  // 当前排序状态的便捷访问
-  const currentSortState = getCurrentSortState();
-  const sortBy = currentSortState.sortBy;
-  const sortOrder = currentSortState.sortDirection;
-
   // 调试用函数 - 暴露到全局以便在控制台调用
   useEffect(() => {
     (window as any).debugSortState = () => {
@@ -289,22 +295,6 @@ function ImprovedApp() {
       console.log('当前音乐列表数量:', getCurrentMusicList().length);
     };
   });
-
-  const handleSortChange = (
-    field: 'name' | 'artist' | 'duration' | 'addedTime' | 'manual',
-    order: 'asc' | 'desc'
-  ) => {
-    console.log(`🔄 排序切换 - 视图: ${activeView}, 从 ${getCurrentSortState().sortBy} 切换到 ${field}`);
-    
-    // 如果正在手动排序模式，需要先结束手动排序
-    if (isManualSortMode) {
-      console.log('⚠️ 正在手动排序模式，无法切换排序方式');
-      return;
-    }
-    
-    setCurrentSortState(field, order);
-    console.log(`✅ 排序状态已更新 - 视图: ${activeView}, 字段: ${field}, 顺序: ${order}`);
-  };
 
   // 开始手动排序
   const handleStartManualSort = () => {
@@ -426,13 +416,13 @@ function ImprovedApp() {
   };
 
   const handleReorder = async (ids: string[]) => {
-    // 只有在手动排序模式才允许重新排序
-    if (!isManualSortMode) {
-      console.log('⚠️ 不在手动排序模式，忽略重新排序操作');
+    // 拖拽放手后直接保存为手动排序，不要求先进入手动模式
+    if (ids.length === 0) {
+      console.log('⚠️ 拖拽排序为空，忽略本次操作');
       return;
     }
     
-    console.log('🔄 手动排序模式中拖拽重新排序:', ids);
+    console.log('🔄 拖拽排序后自动保存:', ids);
     
     // 实时更新手动排序状态
     const currentId = activeView.startsWith('playlist-') ? activeView.replace('playlist-', '') : 'all-music';
@@ -456,7 +446,15 @@ function ImprovedApp() {
       });
     }
     
-    console.log(`✅ 实时更新手动排序状态完成 - 视图: ${activeView}, 顺序: ${ids.length} 个项目`);
+    try {
+      await setCurrentSortState('manual', 'desc', ids);
+      setIsManualSortMode(false);
+      setManualSortOriginalState(null);
+      console.log(`✅ 手动排序已自动保存 - 视图: ${activeView}, 顺序: ${ids.length} 个项目`);
+    } catch (error) {
+      console.error('自动保存手动排序失败:', error);
+      notify.error('保存失败', '排序已调整，但自动保存失败，请重试');
+    }
   };
 
   // 处理拖拽文件到特定播放列表
@@ -643,53 +641,6 @@ function ImprovedApp() {
     setPlayMode(modes[nextIndex]);
   };
 
-  // 定位当前播放的音乐
-  const handleLocateCurrentMusic = () => {
-    if (!currentMusic) {
-      toast.info('当前没有播放音乐');
-      return;
-    }
-
-    // 设置高亮
-    setHighlightedId(currentMusic.id);
-    
-    // 滚动到目标元素
-    const element = document.getElementById(`music-item-${currentMusic.id}`);
-    if (element) {
-      element.scrollIntoView({ 
-        behavior: 'smooth', 
-        block: 'center' 
-      });
-    }
-
-    // 1秒后清除高亮
-    setTimeout(() => {
-      setHighlightedId(null);
-    }, 1000);
-  };
-
-  // 键盘快捷键支持
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      // Ctrl/Cmd + L 定位当前播放音乐
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'l') {
-        event.preventDefault();
-        handleLocateCurrentMusic();
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [currentMusic]); // 依赖 currentMusic 以确保最新状态
-  
-  // 渐强渐弱效果
-  const [fadeInDuration, setFadeInDuration] = useState(3000);
-  const [fadeOutDuration, setFadeOutDuration] = useState(3000);
-  const [isFadeEnabled, setIsFadeEnabled] = useState(false);
-  const [isFading, setIsFading] = useState(false);
-  
   // 进度条状态
   const [isDragging, setIsDragging] = useState(false);
   const [isHovering, setIsHovering] = useState(false);
@@ -824,29 +775,7 @@ function ImprovedApp() {
     }
   };
 
-  // 重叠/交叉淡入淡出
-  const [isOverlapEnabled, setIsOverlapEnabled] = useState(() => {
-    try {
-      const saved = localStorage.getItem('wedding-music-player-overlap-enabled');
-      return saved !== null ? JSON.parse(saved) : true; // 默认开启
-    } catch (error) {
-      console.warn('无法读取重叠设置:', error);
-      return true; // 默认开启
-    }
-  });
-  const overlapAudioRef = useRef<HTMLAudioElement | null>(null);
-  const crossfadeTimerRef = useRef<NodeJS.Timeout | null>(null);
   const lastPlayActionTimeRef = useRef<number>(0);
-
-  // 保存重叠设置到 localStorage
-  useEffect(() => {
-    try {
-      localStorage.setItem('wedding-music-player-overlap-enabled', JSON.stringify(isOverlapEnabled));
-      console.log('重叠设置已保存:', isOverlapEnabled);
-    } catch (error) {
-      console.warn('无法保存重叠设置:', error);
-    }
-  }, [isOverlapEnabled]);
 
   // Activation states
   const [isActivated, setIsActivated] = useState(false);
@@ -1323,6 +1252,26 @@ function ImprovedApp() {
       });
 
       setMusicFiles(updatedMusicData);
+
+      const playlistData = await window.electronAPI.music.playlists.getAll();
+      const sortedPlaylists = playlistData
+        .map((playlist, index) => ({
+          ...playlist,
+          displayOrder: typeof playlist.displayOrder === 'number' ? playlist.displayOrder : index
+        }))
+        .sort((a, b) => (a.displayOrder ?? 999) - (b.displayOrder ?? 999));
+      setPlaylists(sortedPlaylists);
+      setPlaylistSortStates(prev => {
+        const next = { ...prev };
+        sortedPlaylists.forEach(playlist => {
+          next[playlist.id] = {
+            sortBy: playlist.sortBy || next[playlist.id]?.sortBy || 'addedTime',
+            sortDirection: playlist.sortDirection || next[playlist.id]?.sortDirection || 'desc',
+            manualOrder: playlist.manualOrder || next[playlist.id]?.manualOrder || []
+          };
+        });
+        return next;
+      });
       
       // 更新当前音乐信息（如果正在播放剪辑的音乐）
       if (currentMusic) {
@@ -1558,16 +1507,18 @@ function ImprovedApp() {
       
       // 处理音频编辑器路由
       if (hash.startsWith('#/audio-editor/')) {
-        const musicId = hash.replace('#/audio-editor/', '');
-        console.log('检测到音频编辑器路由，音乐ID:', musicId);
+        const { musicId, playlistId } = parseAudioEditorHash(hash);
+        console.log('检测到音频编辑器路由，音乐ID:', musicId, '歌单ID:', playlistId);
         setActiveModule('audio-editor');
         setAudioEditorMusicId(musicId);
+        setAudioEditorPlaylistId(playlistId);
         console.log('已设置activeModule为audio-editor，musicId:', musicId);
         return; // 早期返回，避免后续处理
       } else if (hash === '#/audio-editor') {
         console.log('检测到音频编辑器路由（无ID）');
         setActiveModule('audio-editor');
         setAudioEditorMusicId(null);
+        setAudioEditorPlaylistId(null);
         return; // 早期返回，避免后续处理
       }
       
@@ -1576,6 +1527,7 @@ function ImprovedApp() {
         console.log('检测到主页路由，返回音乐播放模块');
         setActiveModule('music-playback');
         setAudioEditorMusicId(null);
+        setAudioEditorPlaylistId(null);
         
         // 如果没有activeView，设置默认视图
         if (!activeView && playlists.length > 0) {
@@ -1610,12 +1562,14 @@ function ImprovedApp() {
       console.log('初始hash:', hash);
       
       if (hash.startsWith('#/audio-editor/')) {
-        const musicId = hash.replace('#/audio-editor/', '');
+        const { musicId, playlistId } = parseAudioEditorHash(hash);
         setActiveModule('audio-editor');
         setAudioEditorMusicId(musicId);
+        setAudioEditorPlaylistId(playlistId);
       } else if (hash === '#/audio-editor') {
         setActiveModule('audio-editor');
         setAudioEditorMusicId(null);
+        setAudioEditorPlaylistId(null);
       } else {
         // 设置默认模块和视图
         setActiveModule('music-playback');
@@ -1677,7 +1631,6 @@ function ImprovedApp() {
           console.log(`⏱️ 播放进度: ${audio.currentTime.toFixed(1)}s / ${audio.duration.toFixed(1)}s`);
         }
       }
-      // 删除基于 timeupdate 的指定重叠逻辑
     };
 
     const handleEnded = () => {
@@ -1688,17 +1641,10 @@ function ImprovedApp() {
           player.currentTime = 0;
           player.play().catch(console.error);
           setIsPlaying(true);
-          if (isFadeEnabled) {
-            handleFadeIn();
-          }
         } catch {}
         return;
       }
-      if (isFadeEnabled) {
-        handleFadeOut();
-      } else {
-        handleNext();
-      }
+      handleNext();
     };
 
     const handleLoadedMetadata = async () => {
@@ -1771,7 +1717,7 @@ function ImprovedApp() {
       audio.removeEventListener('loadedmetadata', handleLoadedMetadata);
       audio.removeEventListener('error', handleError);
     };
-  }, [currentMusic, isDragging, isFadeEnabled, volume, isMuted, playMode]);
+  }, [currentMusic, isDragging, volume, isMuted, playMode]);
 
   // 计算当前视图下的音乐列表，用于上一首/下一首/随机选择范围
   // 需要考虑排序状态，确保上一曲/下一曲的顺序与界面显示一致
@@ -1806,15 +1752,11 @@ function ImprovedApp() {
       baseList = [...musicFiles];
     }
     
-    // 应用当前视图的排序状态
-    const currentSortState = getCurrentSortState();
-    if (currentSortState.sortBy === 'manual' && currentSortState.manualOrder) {
-      // 如果是手动排序，按照保存的顺序排列
-      const manualOrder = currentSortState.manualOrder;
+    const manualOrder = getCurrentSortState().manualOrder;
+    if (manualOrder && manualOrder.length > 0) {
       const orderedList: MusicFile[] = [];
       const musicMap = new Map(baseList.map(m => [m.id, m]));
       
-      // 按保存的顺序添加音乐
       for (const id of manualOrder) {
         const music = musicMap.get(id);
         if (music) {
@@ -1823,33 +1765,11 @@ function ImprovedApp() {
         }
       }
       
-      // 添加新增的音乐到末尾
       orderedList.push(...Array.from(musicMap.values()));
       return orderedList;
-    } else {
-      // 应用其他排序方式
-      return baseList.sort((a, b) => {
-        let compareValue = 0;
-        
-        switch (currentSortState.sortBy) {
-          case 'name':
-            compareValue = a.name.localeCompare(b.name);
-            break;
-          case 'artist':
-            compareValue = (a.artist || '').localeCompare(b.artist || '');
-            break;
-          case 'duration':
-            compareValue = (a.duration || 0) - (b.duration || 0);
-            break;
-          case 'addedTime':
-          default:
-            compareValue = (a.addedTime?.getTime() || 0) - (b.addedTime?.getTime() || 0);
-            break;
-        }
-        
-        return currentSortState.sortDirection === 'desc' ? -compareValue : compareValue;
-      });
     }
+
+    return baseList;
   }, [isDataLoaded, activeView, playlists, musicFiles, playlistSortStates]);
 
   // 同步音量和静音
@@ -1857,14 +1777,12 @@ function ImprovedApp() {
     if (audioRef.current) {
       audioRef.current.volume = volume;
     }
-    if (overlapAudioRef.current) overlapAudioRef.current.volume = volume;
   }, [volume]);
 
   useEffect(() => {
     if (audioRef.current) {
       audioRef.current.muted = isMuted;
     }
-    if (overlapAudioRef.current) overlapAudioRef.current.muted = isMuted;
   }, [isMuted]);
 
   // 播放音乐
@@ -1914,10 +1832,6 @@ function ImprovedApp() {
             m.id === music.id ? { ...m, isPlaying: true } : m
           ));
           
-          if (isFadeEnabled) {
-            handleFadeIn();
-          }
-          
           // 移除播放提示，减少打扰
           console.log('正在播放:', music.name);
         }).catch(error => {
@@ -1941,10 +1855,8 @@ function ImprovedApp() {
     
     if (isPlaying) {
       audioRef.current.pause();
-      if (overlapAudioRef.current) overlapAudioRef.current.pause();
     } else {
       audioRef.current.play().catch(console.error);
-      if (overlapAudioRef.current) overlapAudioRef.current.play().catch(console.error);
     }
     
     setIsPlaying(newPlayingState);
@@ -1952,6 +1864,25 @@ function ImprovedApp() {
     setMusicFiles(prev => prev.map(m => 
       m.id === currentMusic.id ? { ...m, isPlaying: newPlayingState } : { ...m, isPlaying: false }
     ));
+  };
+
+  const handleRestartCurrent = () => {
+    if (!audioRef.current || !currentMusic) return;
+
+    audioRef.current.currentTime = 0;
+    audioRef.current.volume = isMuted ? 0 : volume;
+    audioRef.current.muted = isMuted;
+    setCurrentTime(0);
+
+    audioRef.current.play().then(() => {
+      setIsPlaying(true);
+      setMusicFiles(prev => prev.map(m => (
+        m.id === currentMusic.id ? { ...m, isPlaying: true } : { ...m, isPlaying: false }
+      )));
+    }).catch(error => {
+      console.error('从头播放失败:', error);
+      notify.error('播放失败', '无法从头播放当前歌曲');
+    });
   };
 
   const handleStop = () => {
@@ -1972,73 +1903,6 @@ function ImprovedApp() {
     // 只有在播放新音乐时才会更新播放歌单
   };
 
-  const startCrossfadeTo = (target: MusicFile) => {
-    if (!audioRef.current) return;
-    const current = audioRef.current;
-    // 若已存在重叠音频，先停止
-    if (overlapAudioRef.current) {
-      try { overlapAudioRef.current.pause(); } catch {}
-      overlapAudioRef.current = null;
-    }
-    if (crossfadeTimerRef.current) {
-      clearInterval(crossfadeTimerRef.current);
-      crossfadeTimerRef.current = null;
-    }
-    // 准备下一首音频
-    const nextAudio = new Audio();
-    nextAudio.src = target.url || '';
-    nextAudio.preload = 'auto';
-    nextAudio.volume = isMuted ? 0 : volume;
-    nextAudio.muted = isMuted;
-    overlapAudioRef.current = nextAudio;
-    const crossfadeMs = 3000;
-    const steps = 60;
-    const stepDuration = crossfadeMs / steps;
-    const currentStart = current.volume;
-    const nextStart = 0;
-    const currentDelta = currentStart / steps;
-    const nextDelta = (isMuted ? 0 : volume) / steps;
-    // 从任意时间点立即开始播放下一首
-    nextAudio.currentTime = 0;
-    nextAudio.play().catch(console.error);
-    let i = 0;
-    const timer = setInterval(() => {
-      i++;
-      const done = i >= steps;
-      if (!current.paused) current.volume = Math.max(0, currentStart - currentDelta * i);
-      nextAudio.volume = Math.min(isMuted ? 0 : volume, nextStart + nextDelta * i);
-      if (done) {
-        clearInterval(timer);
-        crossfadeTimerRef.current = null;
-        try { current.pause(); } catch {}
-        // 切到新源
-        setCurrentMusic(target);
-        current.src = target.url || '';
-        const onLoaded = () => {
-          const crossfadeSeconds = crossfadeMs / 1000;
-          const duration = isFinite(current.duration) ? current.duration : crossfadeSeconds;
-          const seekSeconds = Math.min(crossfadeSeconds, duration);
-          current.currentTime = seekSeconds;
-          setCurrentTime(seekSeconds);
-          current.volume = isMuted ? 0 : volume;
-          current
-            .play()
-            .catch(console.error)
-            .finally(() => {
-              try { nextAudio.pause(); } catch {}
-              overlapAudioRef.current = null;
-            });
-          current.removeEventListener('loadedmetadata', onLoaded);
-        };
-        current.addEventListener('loadedmetadata', onLoaded);
-        current.load();
-        setIsPlaying(true);
-        setMusicFiles(prev => prev.map(m => ({ ...m, isPlaying: m.id === target.id })));
-      }
-    }, stepDuration);
-    crossfadeTimerRef.current = timer as unknown as NodeJS.Timeout;
-  };
-
   const handlePrevious = () => {
     if (!currentMusic || currentList.length === 0) return;
     const currentIndex = currentList.findIndex(m => m.id === currentMusic.id);
@@ -2055,11 +1919,7 @@ function ImprovedApp() {
     
     console.log(`🎵 切换到上一曲: ${target.name} (索引: ${currentIndex - 1 >= 0 ? currentIndex - 1 : currentList.length - 1})`);
     
-    if (isOverlapEnabled && audioRef.current) {
-      startCrossfadeTo(target);
-    } else {
-      handlePlayMusic(target);
-    }
+    handlePlayMusic(target);
   };
 
   const handleNext = () => {
@@ -2091,11 +1951,7 @@ function ImprovedApp() {
     }
 
     if (target) {
-      if (isOverlapEnabled && audioRef.current) {
-        startCrossfadeTo(target);
-      } else {
-        handlePlayMusic(target);
-      }
+      handlePlayMusic(target);
     }
   };
 
@@ -2230,7 +2086,6 @@ function ImprovedApp() {
 
   // 音量控制
   const handleVolumeChange = (newVolume: number) => {
-    if (isFading) return;
     setVolume(newVolume);
     if (newVolume > 0) {
       setIsMuted(false);
@@ -2238,8 +2093,6 @@ function ImprovedApp() {
   };
 
   const handleToggleMute = () => {
-    if (isFading) return;
-    
     if (audioRef.current) {
       if (isMuted) {
         const newVolume = volume > 0 ? volume : 0.5;
@@ -2251,84 +2104,6 @@ function ImprovedApp() {
         setIsMuted(true);
       }
     }
-  };
-
-  // 渐强渐弱效果
-  const handleFadeIn = () => {
-    if (!audioRef.current || !isFadeEnabled) return;
-    
-    const targetVolume = volume;
-    const startVolume = 0;
-    const duration = fadeInDuration;
-    const steps = 60;
-    const stepDuration = duration / steps;
-    const volumeStep = (targetVolume - startVolume) / steps;
-    
-    let currentStep = 0;
-    let fadeInInterval: NodeJS.Timeout;
-    
-    setIsFading(true);
-    setIsMuted(false);
-    
-    if (audioRef.current) {
-      audioRef.current.muted = false;
-      audioRef.current.volume = startVolume;
-    }
-    
-    fadeInInterval = setInterval(() => {
-      currentStep++;
-      if (currentStep <= steps && audioRef.current) {
-        const newVolume = Math.min(startVolume + (volumeStep * currentStep), 1);
-        audioRef.current.volume = newVolume;
-      } else {
-        clearInterval(fadeInInterval);
-        if (audioRef.current) {
-          audioRef.current.volume = targetVolume;
-        }
-        setIsFading(false);
-      }
-    }, stepDuration);
-    
-    return () => clearInterval(fadeInInterval);
-  };
-
-  const handleFadeOut = () => {
-    if (!audioRef.current || !isFadeEnabled) return;
-    
-    const startVolume = audioRef.current.volume;
-    const targetVolume = 0;
-    const duration = fadeOutDuration;
-    const steps = 60;
-    const stepDuration = duration / steps;
-    const volumeStep = (startVolume - targetVolume) / steps;
-    
-    let currentStep = 0;
-    let fadeOutInterval: NodeJS.Timeout;
-    
-    setIsFading(true);
-    
-    fadeOutInterval = setInterval(() => {
-      currentStep++;
-      if (currentStep <= steps && audioRef.current) {
-        const newVolume = Math.max(startVolume - (volumeStep * currentStep), 0);
-        audioRef.current.volume = newVolume;
-      } else {
-        clearInterval(fadeOutInterval);
-        if (audioRef.current) {
-          audioRef.current.volume = targetVolume;
-        }
-        setIsFading(false);
-        handleNext();
-      }
-    }, stepDuration);
-    
-    return () => clearInterval(fadeOutInterval);
-  };
-
-  const handleToggleFade = () => {
-    setIsFadeEnabled(!isFadeEnabled);
-    // 移除渐强渐弱提示，减少打扰
-    console.log(isFadeEnabled ? '渐强渐弱已关闭' : '渐强渐弱已开启');
   };
 
   // 进度条控制
@@ -3174,93 +2949,25 @@ function ImprovedApp() {
     return applySortingToMusicList(filteredList);
   };
 
-  // 根据当前视图的排序状态对音乐列表进行排序
+  // 只保留手动排序：没有手动顺序时保持歌单原顺序。
   const applySortingToMusicList = (musicList: MusicFile[]): MusicFile[] => {
-    const currentSortState = getCurrentSortState();
-    const { sortBy, sortDirection, manualOrder } = currentSortState;
-    
-    console.log('🎯 applySortingToMusicList 被调用:');
-    console.log('  - 输入音乐列表数量:', musicList.length);
-    console.log('  - 排序方式:', sortBy);
-    console.log('  - 排序方向:', sortDirection);
-    console.log('  - 手动排序顺序:', manualOrder?.length ? `${manualOrder.length}个项目` : '无');
-    
-    // 如果是手动排序模式，或者在手动排序中，使用保存的手动排序顺序
-    if (sortBy === 'manual' || isManualSortMode) {
-      if (manualOrder && manualOrder.length > 0) {
-        console.log('✅ 手动排序模式：使用保存的手动排序顺序', manualOrder);
-        // 按照保存的手动顺序重新排列
-        const orderedList: MusicFile[] = [];
-        const musicMap = new Map(musicList.map(m => [m.id, m]));
-        
-        console.log('  - 原始音乐映射大小:', musicMap.size);
-        
-        // 先按照手动顺序添加
-        for (const id of manualOrder) {
-          const music = musicMap.get(id);
-          if (music) {
-            orderedList.push(music);
-            musicMap.delete(id); // 避免重复添加
-          } else {
-            console.warn(`⚠️ 手动排序中的ID ${id} 在当前音乐列表中不存在`);
-          }
-        }
-        
-        // 添加任何不在手动顺序中的新音乐（例如新导入的）
-        const remaining = Array.from(musicMap.values());
-        console.log(`  - 按手动顺序排列: ${orderedList.length}个`);
-        console.log(`  - 剩余新音乐: ${remaining.length}个`);
-        
-        const result = [...orderedList, ...remaining];
-        console.log('  - 最终返回音乐数量:', result.length);
-        return result;
-      } else {
-        console.log('⚠️ 手动排序模式：没有保存的排序顺序，返回当前列表顺序');
-        // 如果是手动排序模式但没有手动排序数据，返回当前列表的顺序（不进行任何排序）
-        return musicList;
-      }
-    } else {
-      // 其他排序方式才进行自动排序
-      const sortedList = [...musicList];
-      
-      switch (sortBy) {
-        case 'name':
-          sortedList.sort((a, b) => {
-            const nameA = a.name.toLowerCase();
-            const nameB = b.name.toLowerCase();
-            const comparison = nameA.localeCompare(nameB);
-            return sortDirection === 'asc' ? comparison : -comparison;
-          });
-          break;
-        case 'artist':
-          sortedList.sort((a, b) => {
-            const artistA = (a.artist || '').toLowerCase();
-            const artistB = (b.artist || '').toLowerCase();
-            const comparison = artistA.localeCompare(artistB);
-            return sortDirection === 'asc' ? comparison : -comparison;
-          });
-          break;
-        case 'duration':
-          sortedList.sort((a, b) => {
-            const durationA = a.duration || 0;
-            const durationB = b.duration || 0;
-            const comparison = durationA - durationB;
-            return sortDirection === 'asc' ? comparison : -comparison;
-          });
-          break;
-        case 'addedTime':
-        default:
-          sortedList.sort((a, b) => {
-            const timeA = a.addedTime.getTime();
-            const timeB = b.addedTime.getTime();
-            const comparison = timeA - timeB;
-            return sortDirection === 'asc' ? comparison : -comparison;
-          });
-          break;
-      }
-      
-      return sortedList;
+    const manualOrder = getCurrentSortState().manualOrder;
+    if (!manualOrder || manualOrder.length === 0) {
+      return musicList;
     }
+
+    const orderedList: MusicFile[] = [];
+    const musicMap = new Map(musicList.map(m => [m.id, m]));
+
+    for (const id of manualOrder) {
+      const music = musicMap.get(id);
+      if (music) {
+        orderedList.push(music);
+        musicMap.delete(id);
+      }
+    }
+
+    return [...orderedList, ...Array.from(musicMap.values())];
   };
 
   // 获取当前视图的标题
@@ -3363,39 +3070,6 @@ function ImprovedApp() {
                     {playMode === 'shuffle' && '随机播放'}
                   </button>
 
-                  {/* 歌曲重叠开关 */}
-                  <div className="flex items-center space-x-2 bg-gray-200/70 dark:bg-gray-800/60 rounded-lg px-3 py-2">
-                    <span className="text-xs text-gray-700 dark:text-gray-300">歌曲重叠</span>
-                    <button
-                      onClick={() => setIsOverlapEnabled((prev: boolean) => !prev)}
-                      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 ${
-                        isOverlapEnabled ? 'bg-blue-600' : 'bg-gray-400 dark:bg-gray-600'
-                      }`}
-                      title="开启后，按上一首/下一首将进行3秒重叠过渡"
-                    >
-                      <span
-                        className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                          isOverlapEnabled ? 'translate-x-6' : 'translate-x-1'
-                        }`}
-                      />
-                    </button>
-                  </div>
-
-                  {/* 定位当前播放按钮 */}
-                  <button
-                    onClick={handleLocateCurrentMusic}
-                    disabled={!currentMusic}
-                    className={`px-3 py-2 rounded-lg transition-colors flex items-center gap-2 focus:outline-none focus:ring-2 focus:ring-opacity-50 ${
-                      currentMusic 
-                        ? 'bg-green-600 hover:bg-green-700 text-white focus:ring-green-500' 
-                        : 'bg-gray-300 text-gray-500 cursor-not-allowed focus:ring-gray-400'
-                    }`}
-                    title={currentMusic ? '定位当前播放的音乐' : '当前没有播放音乐'}
-                  >
-                    <LocateIcon size={16} />
-                    定位
-                  </button>
-
                   {/* 导入音乐按钮 */}
                   <button
                     onClick={() => setShowImportModal(true)}
@@ -3419,9 +3093,6 @@ function ImprovedApp() {
                 onRemoveFromPlaylist={handleRemoveFromPlaylist}
                 playlists={playlists}
                 currentPlaylistId={activeView.startsWith('playlist-') ? activeView.replace('playlist-', '') : undefined}
-                sortBy={getCurrentSortState().sortBy}
-                sortOrder={getCurrentSortState().sortDirection}
-                onSortChange={handleSortChange}
                 onReorder={handleReorder}
                 highlightedId={highlightedId}
                 onImportFiles={handleImportFiles}
@@ -3519,7 +3190,10 @@ function ImprovedApp() {
                 </div>
               </div>
             )}
-            <AudioEditor musicId={audioEditorMusicId || undefined} />
+            <AudioEditor
+              musicId={audioEditorMusicId || undefined}
+              sourcePlaylistId={audioEditorPlaylistId || undefined}
+            />
           </div>
         );
       case 'favorites-notes':
@@ -3885,10 +3559,8 @@ function ImprovedApp() {
                 isDragging={isDragging}
                 isHovering={isHovering}
                 dragTime={dragTime}
-                isFadeEnabled={isFadeEnabled}
-                fadeInDuration={fadeInDuration}
-                fadeOutDuration={fadeOutDuration}
                 onTogglePlayPause={handleTogglePlayPause}
+                onRestartCurrent={handleRestartCurrent}
                 onStop={handleStop}
                 onPrevious={handlePrevious}
                 onNext={handleNext}
@@ -3899,9 +3571,6 @@ function ImprovedApp() {
                 onSliderMouseDown={handleSliderMouseDown}
                 onProgressBarMouseEnter={() => setIsHovering(true)}
                 onProgressBarMouseLeave={() => setIsHovering(false)}
-                onToggleFade={handleToggleFade}
-                onFadeInDurationChange={setFadeInDuration}
-                onFadeOutDurationChange={setFadeOutDuration}
                 progressBarRef={progressBarRef}
                 playMode={playMode}
                 onTogglePlayMode={handleTogglePlayMode}
@@ -3934,8 +3603,6 @@ function ImprovedApp() {
         onClose={() => setShowRecordingModal(false)}
         onStartRecording={handleRecordingStart}
       />
-
-      {/* 移除手动重叠选择弹窗 */}
 
       {/* Activation Modal */}
       {!isActivated && (

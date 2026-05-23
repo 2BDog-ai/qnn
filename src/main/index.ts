@@ -67,9 +67,9 @@ function registerDataManagerIPC() {
     console.log('IPC: 获取音乐文件:', id);
     return dataManager!.getMusicFile(id);
   });
-  safeIpcHandle('music:add', (_, musicFile: any) => {
+  safeIpcHandle('music:add', (_, musicFile: any, targetPlaylistId?: string) => {
     console.log('IPC: 添加单个音乐文件:', musicFile.fileName);
-    return dataManager!.addMusicFile(musicFile);
+    return dataManager!.addMusicFile(musicFile, targetPlaylistId);
   });
   safeIpcHandle('music:addBatch', (_, musicFiles: any[]) => {
     console.log('=== IPC: 批量添加音乐文件 ===');
@@ -1308,10 +1308,10 @@ safeIpcHandle('music:getAll', () => {
   }
 });
 
-safeIpcHandle('music:add', (_event, musicFile: any) => {
+safeIpcHandle('music:add', (_event, musicFile: any, targetPlaylistId?: string) => {
   try {
     const dm = DataManager.getInstance();
-    dm.addMusicFile(musicFile);
+    dm.addMusicFile(musicFile, targetPlaylistId);
     return true;
   } catch (e) {
     console.error('fallback add 失败:', e);

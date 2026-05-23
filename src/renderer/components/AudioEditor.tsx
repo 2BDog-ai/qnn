@@ -17,6 +17,7 @@ interface Selection {
 
 interface AudioEditorProps {
   musicId?: string;
+  sourcePlaylistId?: string;
 }
 
 type WaveformStatus = 'idle' | 'loading' | 'ready' | 'fallback' | 'error';
@@ -82,7 +83,15 @@ const safeNumber = (value: unknown, fallback = 0) => {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : fallback;
 };
 
-export const AudioEditor: React.FC<AudioEditorProps> = ({ musicId }) => {
+const normalizeLocalPath = (filePath: string) => {
+  let normalized = filePath.replace(/\\/g, '/');
+  if (/^[A-Za-z]:(?!\/)/.test(normalized)) {
+    normalized = `${normalized.slice(0, 2)}/${normalized.slice(2)}`;
+  }
+  return normalized;
+};
+
+export const AudioEditor: React.FC<AudioEditorProps> = ({ musicId, sourcePlaylistId }) => {
   const [audioFile, setAudioFile] = useState<AudioFile | null>(null);
   const [waveformData, setWaveformData] = useState<number[]>([]);
   const [waveformStatus, setWaveformStatus] = useState<WaveformStatus>('idle');
@@ -415,7 +424,10 @@ export const AudioEditor: React.FC<AudioEditorProps> = ({ musicId }) => {
       let targetMusicId = musicId;
       if (!targetMusicId) {
         const match = window.location.hash.match(/\/audio-editor\/(.+)/);
-        targetMusicId = match?.[1];
+        targetMusicId = match?.[1]?.split('?')[0];
+        if (targetMusicId) {
+          targetMusicId = decodeURIComponent(targetMusicId);
+        }
       }
       if (!targetMusicId) return;
 
@@ -744,11 +756,25 @@ export const AudioEditor: React.FC<AudioEditorProps> = ({ musicId }) => {
       const originalDir = originalPath.replace(/[/\\][^/\\]+$/, '');
       const baseName = audioFile.name.replace(/\.[^.]+$/, '');
       const clipName = `${baseName}_clip_${formatTimeForFile(selection.start)}_${formatTimeForFile(selection.end)}_${Date.now()}.mp3`;
-      const outputPath = `${originalDir}\\${clipName}`;
+      const outputPath = normalizeLocalPath(`${originalDir}/${clipName}`);
 
       setIsProcessing(true);
       setProgress(0);
       await runTrim(outputPath);
+
+      const outputExists = window.electronAPI?.fs?.exists
+        ? await window.electronAPI.fs.exists(outputPath)
+        : true;
+      if (!outputExists) {
+        throw new Error('剪辑文件没有生成，请重新剪辑');
+      }
+
+      const outputStat = window.electronAPI?.fs?.stat
+        ? await window.electronAPI.fs.stat(outputPath)
+        : null;
+      if (outputStat && outputStat.size <= 0) {
+        throw new Error('剪辑文件大小为 0，无法加入歌单');
+      }
 
       const newMusicId = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
       const newDuration = selection.end - selection.start;
@@ -760,7 +786,7 @@ export const AudioEditor: React.FC<AudioEditorProps> = ({ musicId }) => {
         artist: originalMusicData?.artist || 'Unknown Artist',
         album: originalMusicData?.album || 'Unknown Album',
         duration: newDuration,
-        fileSize: 0,
+        fileSize: outputStat?.size || 0,
         format: 'mp3',
         bitrate: originalMusicData?.bitrate || 0,
         sampleRate: originalMusicData?.sampleRate || audioFile.sampleRate || 44100,
@@ -770,13 +796,13 @@ export const AudioEditor: React.FC<AudioEditorProps> = ({ musicId }) => {
         isTrimmed: true,
         customTags: [],
         thumbnailPath: null
-      });
+      }, sourcePlaylistId);
 
       window.dispatchEvent(new CustomEvent('music-list-refresh', {
-        detail: { updatedMusicId: newMusicId, action: 'added' }
+        detail: { updatedMusicId: newMusicId, action: 'added', playlistId: sourcePlaylistId }
       }));
 
-      alert('保存成功：已把剪辑版加入歌单，原版音乐保留。');
+      alert('保存成功：已把剪辑版加入当前歌单，原版音乐保留。');
       window.location.hash = '#/';
     } catch (error) {
       console.error('保存剪辑失败:', error);

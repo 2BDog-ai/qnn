@@ -125,7 +125,7 @@ const musicAPI = {
   // 音乐文件操作
   getAll: () => ipcRenderer.invoke('music:getAll'),
   get: (id: string) => ipcRenderer.invoke('music:get', id),
-  add: (musicFile: any) => ipcRenderer.invoke('music:add', musicFile),
+  add: (musicFile: any, targetPlaylistId?: string) => ipcRenderer.invoke('music:add', musicFile, targetPlaylistId),
   addBatch: (musicFiles: any[]) => ipcRenderer.invoke('music:addBatch', musicFiles),
   update: (id: string, updates: any) => ipcRenderer.invoke('music:update', id, updates),
   delete: (id: string) => ipcRenderer.invoke('music:delete', id),

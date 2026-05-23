@@ -475,7 +475,7 @@ async function checkAndFixMacOSPermissions() {
     const appPath = app.getAppPath();
     let appBundlePath = appPath;
     
-    // 更精确地定位 .app 包路径
+    // 更精确地解析 .app 包路径
     if (appPath.includes('.app')) {
       const appIndex = appPath.indexOf('.app');
       appBundlePath = appPath.substring(0, appIndex + 4);

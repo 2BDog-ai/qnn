@@ -73,7 +73,7 @@ declare global {
         // 音乐文件操作
         getAll: () => Promise<any[]>;
         get: (id: string) => Promise<any>;
-        add: (musicFile: any) => Promise<any>;
+        add: (musicFile: any, targetPlaylistId?: string) => Promise<any>;
         addBatch: (musicFiles: any[]) => Promise<any>;
         update: (id: string, updates: any) => Promise<any>;
         delete: (id: string) => Promise<any>;
@@ -155,5 +155,4 @@ declare global {
 }
 
 export {};
-
 

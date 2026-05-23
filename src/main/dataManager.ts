@@ -165,7 +165,7 @@ export class DataManager extends EventEmitter {
     return this.musicFiles.get(id);
   }
 
-  public addMusicFile(musicFile: AudioFile): void {
+  public addMusicFile(musicFile: AudioFile, targetPlaylistId?: string): void {
     console.log('🎵 DataManager: 开始添加音乐文件:', musicFile.displayName || musicFile.fileName);
     
     // Windows平台调试信息
@@ -190,8 +190,15 @@ export class DataManager extends EventEmitter {
       throw error;
     }
     
-    // 自动添加到当前歌单或默认歌单
-    if (this.currentPlaylistId) {
+    // 自动添加到指定歌单、当前歌单或默认歌单
+    const explicitTargetPlaylistId = targetPlaylistId && this.playlists.has(targetPlaylistId)
+      ? targetPlaylistId
+      : null;
+
+    if (explicitTargetPlaylistId) {
+      console.log('🎵 添加到指定歌单:', explicitTargetPlaylistId);
+      this.addMusicToPlaylist(explicitTargetPlaylistId, musicFile.id);
+    } else if (this.currentPlaylistId) {
       console.log('🎵 添加到当前歌单:', this.currentPlaylistId);
       this.addMusicToPlaylist(this.currentPlaylistId, musicFile.id);
     } else {

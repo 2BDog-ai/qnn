@@ -8,8 +8,6 @@ interface AudioEditOptions {
   outputFile: string;
   startTime: number;
   endTime: number;
-  fadeIn?: number;
-  fadeOut?: number;
   normalize?: boolean;
   format?: string;
 }
@@ -522,17 +520,8 @@ export class AudioEditorManager {
         '-t', (options.endTime - options.startTime).toString(), // 使用持续时间而不是结束时间
       ];
 
-      // 收集所有音频过滤器
+      // 收集音频过滤器
       const filters: string[] = [];
-      
-      // 添加淡入淡出效果
-      if (options.fadeIn) {
-        filters.push(`afade=in:duration=${options.fadeIn}`);
-      }
-      if (options.fadeOut) {
-        const fadeOutStart = (options.endTime - options.startTime) - options.fadeOut;
-        filters.push(`afade=out:start_time=${fadeOutStart}:duration=${options.fadeOut}`);
-      }
       
       // 音量标准化
       if (options.normalize) {

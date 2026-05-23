@@ -8,6 +8,7 @@ import {
   CutIcon,
   MemoIcon
 } from './icons/AudioIcons';
+import { ThemeSwitcher } from './ThemeSwitcher';
 
 interface TopNavigationProps {
   activeModule: string;
@@ -136,6 +137,8 @@ export const TopNavigation: React.FC<TopNavigationProps> = ({
         </div>
         {/* 右侧：音乐下载按钮、录音指示器、主题切换和手卡 */}
         <div className="flex items-center gap-3 ml-4" style={{ ['WebkitAppRegion' as any]: 'no-drag' }}>
+          <ThemeSwitcher />
+
           {/* 音乐下载网站跳转按钮 */}
           <button
             onClick={() => {

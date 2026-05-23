@@ -63,8 +63,6 @@ export interface PlaybackState {
   volume: number;               // 音量 (0-1)
   playMode: PlayMode;           // 播放模式
   isMuted: boolean;             // 是否静音
-  fadeInDuration: number;       // 淡入时长
-  fadeOutDuration: number;      // 淡出时长
 }
 
 // 播放模式枚举
@@ -84,8 +82,6 @@ export interface UserConfig {
   };
   settings: {
     defaultVolume: number;
-    defaultFadeInDuration: number;
-    defaultFadeOutDuration: number;
     audioOutputDevice: string;
     audioInputDevice: string;
     shortcuts: Record<string, string>;  // 快捷键映射
