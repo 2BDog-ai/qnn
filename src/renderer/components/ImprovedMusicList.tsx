@@ -49,7 +49,7 @@ interface ImprovedMusicListProps {
   currentMusic: MusicFile | null;
   isPlaying: boolean;
   viewMode: 'list' | 'grid';
-  onPlayMusic: (music: MusicFile) => void;
+  onPlayMusic: (music: MusicFile, options?: { restartSame?: boolean }) => void;
   onToggleFavorite: (musicId: string) => void;
   onDeleteMusic: (musicId: string) => void;
   onRenameMusic: (musicId: string, newName: string) => void;
@@ -149,16 +149,16 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
         const rect = isDocumentScroller
           ? { top: 0, bottom: window.innerHeight }
           : scrollTarget.getBoundingClientRect();
-        const edgeSize = 150;
-        const maxSpeed = 52;
+        const edgeSize = 96;
+        const maxSpeed = 16;
         let deltaY = 0;
 
         if (pointer.y < rect.top + edgeSize) {
           const distance = Math.max(0, pointer.y - rect.top);
-          deltaY = -Math.ceil(((edgeSize - distance) / edgeSize) * maxSpeed);
+          deltaY = -Math.max(2, Math.ceil(((edgeSize - distance) / edgeSize) * maxSpeed));
         } else if (pointer.y > rect.bottom - edgeSize) {
           const distance = Math.max(0, rect.bottom - pointer.y);
-          deltaY = Math.ceil(((edgeSize - distance) / edgeSize) * maxSpeed);
+          deltaY = Math.max(2, Math.ceil(((edgeSize - distance) / edgeSize) * maxSpeed));
         }
 
         if (deltaY !== 0) {
@@ -608,7 +608,11 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
                                 : ''
                           }`}
                           onClick={(e) => handleSelect(music.id, e)}
-                          onDoubleClick={() => onPlayMusic(music)}
+                          onDoubleClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            onPlayMusic(music, { restartSame: true });
+                          }}
                         >
                           {/* 灏侀潰 */}
                           <div className={`aspect-[16/9] relative overflow-hidden rounded-t-xl ${
@@ -916,7 +920,11 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
                         }`}
                         style={dragProvided.draggableProps.style}
                         onClick={(e) => handleSelect(music.id, e)}
-                        onDoubleClick={() => onPlayMusic(music)}
+                        onDoubleClick={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          onPlayMusic(music, { restartSame: true });
+                        }}
                       >
                         {/* 姝ｅ湪鎾斁鐨勮剦鍔ㄨ竟妗嗘晥鏋?*/}
                         {music.isPlaying && isPlaying && (

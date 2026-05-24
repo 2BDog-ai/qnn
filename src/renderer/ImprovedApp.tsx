@@ -84,6 +84,15 @@ function ImprovedApp() {
   const [activeView, setActiveView] = useState(''); // 初始为空，等待默认歌单加载
   const [audioEditorMusicId, setAudioEditorMusicId] = useState<string | null>(null); 
   const [audioEditorPlaylistId, setAudioEditorPlaylistId] = useState<string | null>(null);
+  const [isOverlapEnabled, setIsOverlapEnabled] = useState(() => {
+    try {
+      const saved = localStorage.getItem('wedding-music-player-overlap-enabled');
+      return saved !== null ? JSON.parse(saved) : true;
+    } catch (error) {
+      console.warn('无法读取歌曲重叠设置:', error);
+      return true;
+    }
+  });
   const [viewMode, setViewMode] = useState<'list' | 'grid'>(() => {
     try {
       const saved = localStorage.getItem('wedding-music-player-view-mode');
@@ -776,6 +785,16 @@ function ImprovedApp() {
   };
 
   const lastPlayActionTimeRef = useRef<number>(0);
+  const overlapAudioRef = useRef<HTMLAudioElement | null>(null);
+  const crossfadeTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('wedding-music-player-overlap-enabled', JSON.stringify(isOverlapEnabled));
+    } catch (error) {
+      console.warn('无法保存歌曲重叠设置:', error);
+    }
+  }, [isOverlapEnabled]);
 
   // Activation states
   const [isActivated, setIsActivated] = useState(false);
@@ -1777,27 +1796,44 @@ function ImprovedApp() {
     if (audioRef.current) {
       audioRef.current.volume = volume;
     }
+    if (overlapAudioRef.current) {
+      overlapAudioRef.current.volume = volume;
+    }
   }, [volume]);
 
   useEffect(() => {
     if (audioRef.current) {
       audioRef.current.muted = isMuted;
     }
+    if (overlapAudioRef.current) {
+      overlapAudioRef.current.muted = isMuted;
+    }
   }, [isMuted]);
 
   // 播放音乐
-  const handlePlayMusic = (music: MusicFile) => {
+  const handlePlayMusic = (music: MusicFile, options: { restartSame?: boolean } = {}) => {
     if (!audioRef.current) return;
 
-    // 防抖：300ms内的重复点击忽略，避免快速双击导致重新播放
+    if (overlapAudioRef.current) {
+      try { overlapAudioRef.current.pause(); } catch {}
+      overlapAudioRef.current = null;
+    }
+    if (crossfadeTimerRef.current !== null) {
+      window.clearInterval(crossfadeTimerRef.current);
+      crossfadeTimerRef.current = null;
+    }
+
     const now = Date.now();
-    if (now - lastPlayActionTimeRef.current < 300) {
+    if (!options.restartSame && now - lastPlayActionTimeRef.current < 300) {
       return;
     }
     lastPlayActionTimeRef.current = now;
 
-    // 如果点击的是当前歌曲，则切换播放/暂停
     if (currentMusic && currentMusic.id === music.id) {
+      if (options.restartSame) {
+        handleRestartCurrent();
+        return;
+      }
       handleTogglePlayPause();
       return;
     }
@@ -1855,8 +1891,10 @@ function ImprovedApp() {
     
     if (isPlaying) {
       audioRef.current.pause();
+      if (overlapAudioRef.current) overlapAudioRef.current.pause();
     } else {
       audioRef.current.play().catch(console.error);
+      if (overlapAudioRef.current) overlapAudioRef.current.play().catch(console.error);
     }
     
     setIsPlaying(newPlayingState);
@@ -1868,6 +1906,15 @@ function ImprovedApp() {
 
   const handleRestartCurrent = () => {
     if (!audioRef.current || !currentMusic) return;
+
+    if (overlapAudioRef.current) {
+      try { overlapAudioRef.current.pause(); } catch {}
+      overlapAudioRef.current = null;
+    }
+    if (crossfadeTimerRef.current !== null) {
+      window.clearInterval(crossfadeTimerRef.current);
+      crossfadeTimerRef.current = null;
+    }
 
     audioRef.current.currentTime = 0;
     audioRef.current.volume = isMuted ? 0 : volume;
@@ -1889,6 +1936,14 @@ function ImprovedApp() {
     if (!audioRef.current) return;
     
     audioRef.current.pause();
+    if (overlapAudioRef.current) {
+      try { overlapAudioRef.current.pause(); } catch {}
+      overlapAudioRef.current = null;
+    }
+    if (crossfadeTimerRef.current !== null) {
+      window.clearInterval(crossfadeTimerRef.current);
+      crossfadeTimerRef.current = null;
+    }
     audioRef.current.currentTime = 0;
     setIsPlaying(false);
     setCurrentTime(0);
@@ -1901,6 +1956,72 @@ function ImprovedApp() {
     
     // 注意：这里不清除 currentPlayingPlaylistId，保持播放歌单的记录
     // 只有在播放新音乐时才会更新播放歌单
+  };
+
+  const startCrossfadeTo = (target: MusicFile) => {
+    if (!audioRef.current) return;
+    const current = audioRef.current;
+
+    if (overlapAudioRef.current) {
+      try { overlapAudioRef.current.pause(); } catch {}
+      overlapAudioRef.current = null;
+    }
+    if (crossfadeTimerRef.current !== null) {
+      window.clearInterval(crossfadeTimerRef.current);
+      crossfadeTimerRef.current = null;
+    }
+
+    const nextAudio = new Audio();
+    nextAudio.src = target.url || '';
+    nextAudio.preload = 'auto';
+    nextAudio.volume = 0;
+    nextAudio.muted = isMuted;
+    overlapAudioRef.current = nextAudio;
+
+    const crossfadeMs = 3000;
+    const steps = 60;
+    const stepDuration = crossfadeMs / steps;
+    const currentStart = current.volume;
+    const targetVolume = isMuted ? 0 : volume;
+    let step = 0;
+
+    nextAudio.currentTime = 0;
+    nextAudio.play().catch(console.error);
+
+    crossfadeTimerRef.current = window.setInterval(() => {
+      step += 1;
+      const progress = Math.min(1, step / steps);
+      if (!current.paused) current.volume = Math.max(0, currentStart * (1 - progress));
+      nextAudio.volume = Math.min(targetVolume, targetVolume * progress);
+
+      if (progress >= 1) {
+        if (crossfadeTimerRef.current !== null) {
+          window.clearInterval(crossfadeTimerRef.current);
+          crossfadeTimerRef.current = null;
+        }
+        try { current.pause(); } catch {}
+        setCurrentMusic(target);
+        current.src = target.url || '';
+        current.volume = targetVolume;
+        current.muted = isMuted;
+        const handoffTime = nextAudio.currentTime || 0;
+        const handleLoaded = () => {
+          const duration = Number.isFinite(current.duration) ? current.duration : handoffTime;
+          const seekTime = Math.min(handoffTime, Math.max(0, duration - 0.1));
+          current.currentTime = Math.max(0, seekTime);
+          setCurrentTime(current.currentTime);
+          current.play().catch(console.error).finally(() => {
+            try { nextAudio.pause(); } catch {}
+            overlapAudioRef.current = null;
+          });
+          current.removeEventListener('loadedmetadata', handleLoaded);
+        };
+        current.addEventListener('loadedmetadata', handleLoaded);
+        current.load();
+        setIsPlaying(true);
+        setMusicFiles(prev => prev.map(m => ({ ...m, isPlaying: m.id === target.id })));
+      }
+    }, stepDuration);
   };
 
   const handlePrevious = () => {
@@ -1919,7 +2040,11 @@ function ImprovedApp() {
     
     console.log(`🎵 切换到上一曲: ${target.name} (索引: ${currentIndex - 1 >= 0 ? currentIndex - 1 : currentList.length - 1})`);
     
-    handlePlayMusic(target);
+    if (isOverlapEnabled && audioRef.current && isPlaying) {
+      startCrossfadeTo(target);
+    } else {
+      handlePlayMusic(target);
+    }
   };
 
   const handleNext = () => {
@@ -1951,7 +2076,11 @@ function ImprovedApp() {
     }
 
     if (target) {
-      handlePlayMusic(target);
+      if (isOverlapEnabled && audioRef.current && isPlaying) {
+        startCrossfadeTo(target);
+      } else {
+        handlePlayMusic(target);
+      }
     }
   };
 
@@ -3070,6 +3199,23 @@ function ImprovedApp() {
                     {playMode === 'shuffle' && '随机播放'}
                   </button>
 
+                  <div className="flex items-center space-x-2 bg-gray-200/70 dark:bg-gray-800/60 rounded-lg px-3 py-2">
+                    <span className="text-xs text-gray-700 dark:text-gray-300">歌曲重叠</span>
+                    <button
+                      onClick={() => setIsOverlapEnabled((prev: boolean) => !prev)}
+                      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 ${
+                        isOverlapEnabled ? 'bg-blue-600' : 'bg-gray-400 dark:bg-gray-600'
+                      }`}
+                      title="开启后，按上一首/下一首将进行3秒重叠过渡"
+                    >
+                      <span
+                        className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                          isOverlapEnabled ? 'translate-x-6' : 'translate-x-1'
+                        }`}
+                      />
+                    </button>
+                  </div>
+
                   {/* 导入音乐按钮 */}
                   <button
                     onClick={() => setShowImportModal(true)}
@@ -3560,7 +3706,6 @@ function ImprovedApp() {
                 isHovering={isHovering}
                 dragTime={dragTime}
                 onTogglePlayPause={handleTogglePlayPause}
-                onRestartCurrent={handleRestartCurrent}
                 onStop={handleStop}
                 onPrevious={handlePrevious}
                 onNext={handleNext}

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React from 'react';
 import {
   PlayIcon,
   PauseIcon,
@@ -25,7 +25,6 @@ interface ImprovedPlayerControlProps {
   dragTime: number;
   currentPlayingPlaylist?: any; // 当前播放的歌单信息
   onTogglePlayPause: () => void;
-  onRestartCurrent: () => void;
   onStop: () => void;
   onPrevious: () => void;
   onNext: () => void;
@@ -52,7 +51,6 @@ export const ImprovedPlayerControl: React.FC<ImprovedPlayerControlProps> = ({
   dragTime,
   currentPlayingPlaylist,
   onTogglePlayPause,
-  onRestartCurrent,
   onStop,
   onPrevious,
   onNext,
@@ -66,38 +64,10 @@ export const ImprovedPlayerControl: React.FC<ImprovedPlayerControlProps> = ({
   onProgressBarMouseLeave,
   progressBarRef
 }) => {
-  const playButtonClickTimerRef = useRef<number | null>(null);
-
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
     const secs = Math.floor(seconds % 60);
     return `${mins}:${secs.toString().padStart(2, '0')}`;
-  };
-
-  useEffect(() => {
-    return () => {
-      if (playButtonClickTimerRef.current !== null) {
-        window.clearTimeout(playButtonClickTimerRef.current);
-      }
-    };
-  }, []);
-
-  const handlePlayButtonClick = () => {
-    if (playButtonClickTimerRef.current !== null) return;
-
-    playButtonClickTimerRef.current = window.setTimeout(() => {
-      onTogglePlayPause();
-      playButtonClickTimerRef.current = null;
-    }, 220);
-  };
-
-  const handlePlayButtonDoubleClick = (event: React.MouseEvent<HTMLButtonElement>) => {
-    event.preventDefault();
-    if (playButtonClickTimerRef.current !== null) {
-      window.clearTimeout(playButtonClickTimerRef.current);
-      playButtonClickTimerRef.current = null;
-    }
-    onRestartCurrent();
   };
 
   if (!currentMusic) return null;
@@ -220,10 +190,9 @@ export const ImprovedPlayerControl: React.FC<ImprovedPlayerControlProps> = ({
           </button>
            
           <button 
-            onClick={handlePlayButtonClick}
-            onDoubleClick={handlePlayButtonDoubleClick}
+            onClick={onTogglePlayPause}
             className="relative p-4 bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white rounded-full transition-all transform hover:scale-105 shadow-xl group focus:outline-none focus:ring-2 focus:ring-blue-300 focus:ring-opacity-75"
-            title={isPlaying ? "暂停（双击从头播放）" : "播放（双击从头播放）"}
+            title={isPlaying ? "暂停" : "播放"}
           >
             <div className="absolute inset-0 bg-white/20 rounded-full animate-ping" />
             {isPlaying ? (
