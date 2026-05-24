@@ -738,6 +738,16 @@ class VocalRemoverManager {
    */
   private buildCompatibleAudioFilter(options: VocalRemovalOptions): string {
     try {
+      // Single stable mode: reduce centered vocals and mix bass/high detail
+      // from the original signal back in so the accompaniment stays audible.
+      return [
+        '[0:a]aformat=channel_layouts=stereo,asplit=3[orig][sideSrc][highSrc]',
+        '[sideSrc]pan=stereo|c0=0.8*c0-0.8*c1|c1=0.8*c1-0.8*c0,volume=1.45[side]',
+        '[orig]lowpass=f=180,volume=0.85[low]',
+        '[highSrc]highpass=f=6500,volume=0.35[high]',
+        '[side][low][high]amix=inputs=3:duration=first:dropout_transition=0,alimiter=limit=0.98'
+      ].join(';');
+
       const algorithm = options.algorithm || 'karaoke';
       const quality = options.quality || 'high';
       
