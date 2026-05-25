@@ -9,12 +9,27 @@ on:
 
 jobs:
   build-macos:
-    name: Build macOS arm64 Package
-    runs-on: macos-15
+    name: Build macOS ${{ matrix.arch }} Package
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-15
+            suffix: mac-arm64
+          - arch: x64
+            runner: macos-15-intel
+            suffix: mac-x64
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Show runner architecture
+        run: |
+          sw_vers
+          uname -m
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -31,15 +46,29 @@ jobs:
         run: npm run build
 
       - name: Build macOS app directory
-        run: npx electron-builder --mac dir --arm64 --config.npmRebuild=false --config.compression=store
+        run: npx electron-builder --mac dir --${{ matrix.arch }} --config.npmRebuild=false --config.compression=store
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Find built app
+        id: app
+        run: |
+          set -e
+          APP_PATH="$(find release -maxdepth 3 -name 'WeddingMusicPlayer.app' -type d | head -n 1)"
+          if [ -z "$APP_PATH" ]; then
+            echo "Could not find WeddingMusicPlayer.app"
+            find release -maxdepth 4 -type d
+            exit 1
+          fi
+          echo "app_path=$APP_PATH" >> "$GITHUB_OUTPUT"
+          echo "app_parent=$(dirname "$APP_PATH")" >> "$GITHUB_OUTPUT"
+          echo "Found app at $APP_PATH"
+
       - name: Repair and sign macOS app
         run: |
           set -e
-          APP="release/mac-arm64/WeddingMusicPlayer.app"
+          APP="${{ steps.app.outputs.app_path }}"
           xattr -cr "$APP" || true
           chmod +x "$APP/Contents/MacOS/WeddingMusicPlayer"
           chmod +x "$APP/Contents/Resources/ffmpeg/ffmpeg" || true
@@ -51,24 +80,32 @@ jobs:
 
       - name: Zip macOS app
         run: |
-          cd release/mac-arm64
-          ditto -c -k --sequesterRsrc --keepParent "WeddingMusicPlayer.app" "../Wedding Music Player-1.0.0-arm64.zip"
+          cd "${{ steps.app.outputs.app_parent }}"
+          ditto -c -k --sequesterRsrc --keepParent "WeddingMusicPlayer.app" "../Wedding Music Player-1.0.0-${{ matrix.suffix }}.zip"
 
       - name: Build macOS DMG
         run: |
           set -e
+          APP="${{ steps.app.outputs.app_path }}"
           mkdir -p release/dmg-root
-          cp -R "release/mac-arm64/WeddingMusicPlayer.app" "release/dmg-root/"
+          cp -R "$APP" "release/dmg-root/"
           ln -s /Applications "release/dmg-root/Applications"
-          cp scripts/install.sh "release/dmg-root/一键安装.command"
-          cp scripts/macos-fix.sh "release/dmg-root/一键修复.command"
-          chmod +x "release/dmg-root/一键安装.command" "release/dmg-root/一键修复.command"
+          cp scripts/install.sh "release/dmg-root/Install.command"
+          cp scripts/macos-fix.sh "release/dmg-root/Repair.command"
+          chmod +x "release/dmg-root/Install.command" "release/dmg-root/Repair.command"
+          cat > "release/dmg-root/README.txt" <<'EOF'
+          Wedding Music Player macOS
+
+          1. Double-click Install.command first.
+          2. If macOS still says the app cannot be opened or is damaged, double-click Repair.command.
+          3. You can also drag WeddingMusicPlayer.app to Applications, then right-click it and choose Open.
+          EOF
           hdiutil create \
             -volname "Wedding Music Player" \
             -srcfolder "release/dmg-root" \
             -ov \
             -format UDZO \
-            "release/Wedding Music Player-1.0.0-arm64.dmg"
+            "release/Wedding Music Player-1.0.0-${{ matrix.suffix }}.dmg"
           rm -rf release/dmg-root
 
       - name: List release files
@@ -77,7 +114,8 @@ jobs:
       - name: Upload macOS package
         uses: actions/upload-artifact@v4
         with:
-          name: Wedding-Music-Player-macOS-arm64
+          name: Wedding-Music-Player-${{ matrix.suffix }}
           path: |
-            release/*
+            release/*.dmg
+            release/*.zip
           if-no-files-found: error
