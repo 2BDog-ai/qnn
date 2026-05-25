@@ -571,11 +571,9 @@ function ImprovedApp() {
 
       if (musicFilesToAdd.length > 0) {
         // 导入文件到库
-        await musicAPI.addBatch(musicFilesToAdd);
+        await musicAPI.addBatch(musicFilesToAdd, playlistId);
         
         // 将文件添加到指定播放列表
-        const musicIds = musicFilesToAdd.map(m => m.id);
-        await musicAPI.playlists.addMusicBatch(playlistId, musicIds);
         
         // 刷新数据
         await loadPlaylists();
@@ -2596,9 +2594,6 @@ function ImprovedApp() {
 
       if (musicFilesToAdd.length > 0) {
         try {
-          const result = await musicAPI.addBatch(musicFilesToAdd);
-          console.log('批量添加结果:', result);
-        
           // 决定目标歌单
           let targetPlaylistId = '';
           if (activeView.startsWith('playlist-')) {
@@ -2608,8 +2603,8 @@ function ImprovedApp() {
             targetPlaylistId = defaultPlaylist.id;
           }
           
-          const musicIds = musicFilesToAdd.map(m => m.id);
-          await musicAPI.playlists.addMusicBatch(targetPlaylistId, musicIds);
+          const result = await musicAPI.addBatch(musicFilesToAdd, targetPlaylistId);
+          console.log('批量添加结果:', result);
           
           // 重新加载数据
           const updatedMusic = await musicAPI.getAll();

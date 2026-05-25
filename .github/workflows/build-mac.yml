@@ -75,7 +75,7 @@ jobs:
           chmod +x "$APP/Contents/Resources/ffmpeg/ffprobe" || true
           chmod +x "$APP/Contents/Resources/demucs/mac/demucs" || true
           find "$APP/Contents/Frameworks" -type f -perm -111 -exec chmod +x {} \; || true
-          codesign --force --deep --sign - --options runtime "$APP" || codesign --force --deep --sign - "$APP"
+          codesign --force --deep --sign - "$APP"
           codesign --verify --deep --strict --verbose=2 "$APP"
 
       - name: Zip macOS app
@@ -95,6 +95,10 @@ jobs:
           chmod +x "release/dmg-root/Install.command" "release/dmg-root/Repair.command"
           cat > "release/dmg-root/README.txt" <<'EOF'
           Wedding Music Player macOS
+
+          Choose the right DMG first:
+          - Apple Silicon / M1 / M2 / M3 / M4: use mac-arm64.dmg
+          - Intel Mac: use mac-x64.dmg
 
           1. Double-click Install.command first.
           2. If macOS still says the app cannot be opened or is damaged, double-click Repair.command.

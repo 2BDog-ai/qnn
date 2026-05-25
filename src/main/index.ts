@@ -71,7 +71,7 @@ function registerDataManagerIPC() {
     console.log('IPC: 添加单个音乐文件:', musicFile.fileName);
     return dataManager!.addMusicFile(musicFile, targetPlaylistId);
   });
-  safeIpcHandle('music:addBatch', (_, musicFiles: any[]) => {
+  safeIpcHandle('music:addBatch', (_, musicFiles: any[], targetPlaylistId?: string) => {
     console.log('=== IPC: 批量添加音乐文件 ===');
     console.log('接收到的文件数量:', musicFiles.length);
     
@@ -126,7 +126,7 @@ function registerDataManagerIPC() {
     });
     
     try {
-      dataManager!.addMusicFiles(musicFiles);
+      dataManager!.addMusicFiles(musicFiles, targetPlaylistId);
       console.log('=== 批量添加完成 ===');
       return { success: true, count: musicFiles.length };
     } catch (error) {
@@ -1286,12 +1286,12 @@ safeIpcHandle('playlist:ensureDefault', () => {
   }
 });
 
-safeIpcHandle('music:addBatch', (_event, musicFiles: any[]) => {
+safeIpcHandle('music:addBatch', (_event, musicFiles: any[], targetPlaylistId?: string) => {
   try {
     const dm = DataManager.getInstance();
     // 确保默认歌单存在
     const defaultPl = dm.getDefaultPlaylist() || dm.ensureDefaultPlaylist();
-    dm.addMusicFiles(musicFiles);
+    dm.addMusicFiles(musicFiles, targetPlaylistId);
     return { success: true, count: musicFiles.length, defaultPlaylistId: defaultPl.id };
   } catch (e) {
     console.error('fallback addBatch 失败:', e);

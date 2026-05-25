@@ -215,7 +215,7 @@ export class DataManager extends EventEmitter {
     console.log('✅ 音乐文件添加流程完成:', musicFile.displayName);
   }
 
-  public addMusicFiles(musicFiles: AudioFile[]): void {
+  public addMusicFiles(musicFiles: AudioFile[], targetPlaylistId?: string): void {
     console.log('DataManager: 开始添加音乐文件:', musicFiles.length, '个文件');
     
     musicFiles.forEach((music, index) => {
@@ -231,14 +231,17 @@ export class DataManager extends EventEmitter {
     });
     
     // 批量添加到当前歌单或默认歌单
-    const targetPlaylistId = this.currentPlaylistId || this.ensureDefaultPlaylist().id;
+    const resolvedTargetPlaylistId =
+      targetPlaylistId && this.playlists.has(targetPlaylistId)
+        ? targetPlaylistId
+        : this.currentPlaylistId || this.ensureDefaultPlaylist().id;
     const musicIds = musicFiles.map(m => m.id);
     
-    console.log('DataManager: 目标歌单ID:', targetPlaylistId);
+    console.log('DataManager: 目标歌单ID:', resolvedTargetPlaylistId);
     console.log('DataManager: 音乐ID列表:', musicIds);
     
-    if (targetPlaylistId) {
-      const playlist = this.playlists.get(targetPlaylistId);
+    if (resolvedTargetPlaylistId) {
+      const playlist = this.playlists.get(resolvedTargetPlaylistId);
       if (playlist) {
         // 过滤掉已存在的音乐ID
         const newMusicIds = musicIds.filter(id => !playlist.audioFiles.includes(id));
@@ -253,17 +256,17 @@ export class DataManager extends EventEmitter {
           
           // 批量更新数据库
           newMusicIds.forEach(musicId => {
-            this.db.addMusicToPlaylist(targetPlaylistId, musicId);
+            this.db.addMusicToPlaylist(resolvedTargetPlaylistId, musicId);
           });
           
           // 更新播放列表信息
-          this.db.updatePlaylist(targetPlaylistId, {
+          this.db.updatePlaylist(resolvedTargetPlaylistId, {
             songCount: playlist.songCount,
             totalDuration: playlist.totalDuration,
             updatedTime: playlist.updatedTime
           });
           
-          this.playlists.set(targetPlaylistId, playlist);
+          this.playlists.set(resolvedTargetPlaylistId, playlist);
           this.emit('playlistUpdated', playlist);
           
           console.log(`${newMusicIds.length} 首音乐已添加到歌单: ${playlist.name} (总数: ${playlist.songCount})`);

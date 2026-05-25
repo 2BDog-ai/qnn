@@ -21,5 +21,4 @@ fi
 xattr -cr "$APP_PATH" 2>/dev/null || true
 xattr -dr com.apple.quarantine "$APP_PATH" 2>/dev/null || true
 chmod -R +x "$APP_PATH/Contents/MacOS" 2>/dev/null || true
-codesign --force --deep --sign - "$APP_PATH" 2>/dev/null || true
 open "$APP_PATH"

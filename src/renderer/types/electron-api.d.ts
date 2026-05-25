@@ -74,7 +74,7 @@ declare global {
         getAll: () => Promise<any[]>;
         get: (id: string) => Promise<any>;
         add: (musicFile: any, targetPlaylistId?: string) => Promise<any>;
-        addBatch: (musicFiles: any[]) => Promise<any>;
+        addBatch: (musicFiles: any[], targetPlaylistId?: string) => Promise<any>;
         update: (id: string, updates: any) => Promise<any>;
         delete: (id: string) => Promise<any>;
         clearAll: () => Promise<void>;
@@ -155,4 +155,3 @@ declare global {
 }
 
 export {};
-

@@ -1,7 +1,5 @@
 #!/bin/bash
 
-# Wedding Music Player - macOS installer helper.
-
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -17,7 +15,7 @@ fail() { printf '\033[0;31m%s\033[0m\n' "$1"; }
 
 pause_exit() {
   echo ""
-  read -r -p "按回车键退出..." _
+  read -r -p "Press Enter to exit..." _
 }
 
 find_source_app() {
@@ -35,18 +33,21 @@ find_source_app() {
 }
 
 echo "=================================================="
-echo "Wedding Music Player - macOS 安装工具"
+echo "Wedding Music Player - macOS Install"
 echo "=================================================="
+echo ""
+echo "Apple Silicon M1/M2/M3/M4: use mac-arm64.dmg"
+echo "Intel Mac: use mac-x64.dmg"
 echo ""
 
 if [[ "$(uname)" != "Darwin" ]]; then
-  fail "这个工具只能在 macOS 上运行。"
+  fail "This helper only runs on macOS."
   pause_exit
   exit 1
 fi
 
 if ! SOURCE_APP="$(find_source_app)"; then
-  fail "没有找到 WeddingMusicPlayer.app。请先打开 DMG，再运行这个脚本。"
+  fail "WeddingMusicPlayer.app was not found. Open the DMG first, then run this script."
   pause_exit
   exit 1
 fi
@@ -54,11 +55,11 @@ fi
 APP_BASENAME="$(basename "$SOURCE_APP")"
 TARGET_APP="/Applications/$APP_BASENAME"
 
-info "正在安装到 /Applications..."
+info "Installing to /Applications..."
 rm -rf "$TARGET_APP" 2>/dev/null || sudo rm -rf "$TARGET_APP"
 cp -R "$SOURCE_APP" "$TARGET_APP" 2>/dev/null || sudo cp -R "$SOURCE_APP" "$TARGET_APP"
 
-info "正在解除 macOS 隔离限制..."
+info "Removing macOS quarantine attributes..."
 xattr -cr "$TARGET_APP" 2>/dev/null || sudo xattr -cr "$TARGET_APP"
 xattr -dr com.apple.quarantine "$TARGET_APP" 2>/dev/null || sudo xattr -dr com.apple.quarantine "$TARGET_APP" 2>/dev/null || true
 
@@ -66,10 +67,8 @@ if [[ -d "$TARGET_APP/Contents/MacOS" ]]; then
   chmod -R +x "$TARGET_APP/Contents/MacOS" 2>/dev/null || sudo chmod -R +x "$TARGET_APP/Contents/MacOS"
 fi
 
-codesign --force --deep --sign - "$TARGET_APP" 2>/dev/null || sudo codesign --force --deep --sign - "$TARGET_APP" 2>/dev/null || true
-
-ok "安装和修复完成。"
-info "正在打开应用..."
-open "$TARGET_APP" || warn "如果没有自动打开，请到“应用程序”里右键 WeddingMusicPlayer，选择“打开”。"
+ok "Install finished."
+info "Opening app..."
+open "$TARGET_APP" || warn "If it does not open, right-click WeddingMusicPlayer in Applications and choose Open."
 
 pause_exit

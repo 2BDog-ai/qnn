@@ -23,7 +23,6 @@ function preprocessMacOSApp(appPath) {
   run(`xattr -dr com.apple.quarantine "${appPath}"`);
   run(`chmod -R +x "${path.join(appPath, 'Contents', 'MacOS')}"`);
   run(`find "${appPath}" -name "*.dylib" -exec chmod 755 {} \\;`);
-  run(`codesign --force --deep --sign - "${appPath}"`);
 }
 
 function writeFile(filePath, content) {
