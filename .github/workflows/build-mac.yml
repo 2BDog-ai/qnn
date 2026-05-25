@@ -36,6 +36,19 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Repair and sign macOS app
+        run: |
+          set -e
+          APP="release/mac-arm64/WeddingMusicPlayer.app"
+          xattr -cr "$APP" || true
+          chmod +x "$APP/Contents/MacOS/WeddingMusicPlayer"
+          chmod +x "$APP/Contents/Resources/ffmpeg/ffmpeg" || true
+          chmod +x "$APP/Contents/Resources/ffmpeg/ffprobe" || true
+          chmod +x "$APP/Contents/Resources/demucs/mac/demucs" || true
+          find "$APP/Contents/Frameworks" -type f -perm -111 -exec chmod +x {} \; || true
+          codesign --force --deep --sign - --options runtime "$APP" || codesign --force --deep --sign - "$APP"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+
       - name: Zip macOS app
         run: |
           cd release/mac-arm64
@@ -47,6 +60,9 @@ jobs:
           mkdir -p release/dmg-root
           cp -R "release/mac-arm64/WeddingMusicPlayer.app" "release/dmg-root/"
           ln -s /Applications "release/dmg-root/Applications"
+          cp scripts/install.sh "release/dmg-root/一键安装.command"
+          cp scripts/macos-fix.sh "release/dmg-root/一键修复.command"
+          chmod +x "release/dmg-root/一键安装.command" "release/dmg-root/一键修复.command"
           hdiutil create \
             -volname "Wedding Music Player" \
             -srcfolder "release/dmg-root" \
