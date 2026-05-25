@@ -1,31 +1,17 @@
-import { ipcMain, dialog, BrowserWindow, app } from 'electron';
-import * as path from 'path';
+import { app, BrowserWindow, dialog, ipcMain } from 'electron';
 import * as fs from 'fs';
-import { spawn } from 'child_process';
-import { promisify } from 'util';
 import * as os from 'os';
+import * as path from 'path';
+import { spawn } from 'child_process';
 
-const writeFile = promisify(fs.writeFile);
-const mkdir = promisify(fs.mkdir);
-const stat = promisify(fs.stat);
-const unlink = promisify(fs.unlink);
-const readdir = promisify(fs.readdir);
-const access = promisify(fs.access);
+type VocalRemovalAlgorithm = 'demucs' | 'center_cancel' | 'karaoke';
 
 interface VocalRemovalOptions {
   inputPath: string;
   outputPath: string;
-  outputFileName?: string;  // 新增：输出文件名
-  algorithm?: 'karaoke' | 'bandpass' | 'phase' | 'highpass' | 'spectral' | 'wiener' | 'bss' | 'hpss' | 'multistage' | 'spectral_gating';
+  outputFileName?: string;
+  algorithm?: VocalRemovalAlgorithm;
   quality?: 'low' | 'medium' | 'high' | 'ultra';
-  preserveBass?: boolean;
-  preserveHighs?: boolean;
-  spectralThreshold?: number;
-  wienerNoiseLevel?: number;
-  bssIterations?: number;
-  hpssKernelSize?: number;
-  multistageLevels?: number;
-  spectralGatingSensitivity?: number;
 }
 
 interface ProcessingResult {
@@ -39,50 +25,56 @@ interface ProcessingResult {
 interface SystemInfo {
   ffmpegAvailable: boolean;
   ffmpegPath?: string;
-  version?: string;
+  ffmpegVersion?: string;
+  demucsAvailable: boolean;
+  demucsPath?: string;
+  demucsModelAvailable: boolean;
   supportedFormats: string[];
   tempDir: string;
   platform: string;
 }
 
+interface ProcessRunResult {
+  success: boolean;
+  output: string;
+  code: number | null;
+}
+
 class VocalRemoverManager {
   private isProcessing = false;
-  private currentProcess: any = null;
+  private currentProcess: ReturnType<typeof spawn> | null = null;
   private mainWindow: BrowserWindow | null = null;
   private systemInfo: SystemInfo | null = null;
-  private rnnoiseModelPath: string | null = null;
+
+  private readonly modelFileName = 'htdemucs.safetensors';
+  private readonly demucsModel = 'htdemucs';
+  private readonly audioExtensions = ['.mp3', '.wav', '.flac', '.m4a', '.aac', '.ogg', '.wma', '.opus', '.aiff', '.aif'];
 
   constructor() {
     this.setupIpcHandlers();
-    this.initializeSystem();
+    void this.initializeSystem();
   }
 
-  /**
-   * 初始化系统信息
-   */
-  private async initializeSystem() {
-    this.systemInfo = await this.getSystemInfo();
-    console.log('系统信息初始化完成:', this.systemInfo);
-  }
-
-  /**
-   * 设置主窗口引用
-   */
   public setMainWindow(window: BrowserWindow) {
     this.mainWindow = window;
   }
 
-  /**
-   * 设置IPC处理器
-   */
+  public cleanup() {
+    this.killCurrentProcess();
+    this.isProcessing = false;
+  }
+
+  public previewFFmpegCommand(options: VocalRemovalOptions): string {
+    const outputPath = this.resolveOutputFilePath(options);
+    const filter = this.getCenterCancelFilter();
+    return `${this.systemInfo?.ffmpegPath || 'ffmpeg'} -i "${options.inputPath}" -filter_complex "${filter}" -map "[a]" "${outputPath}"`;
+  }
+
   private setupIpcHandlers() {
-    // 核心处理功能
-    ipcMain.handle('vocal-remover:process', async (event, options: VocalRemovalOptions) => {
-      console.log('收到人声消除请求:', options);
+    ipcMain.handle('vocal-remover:process', async (_event, options: VocalRemovalOptions) => {
       return await this.processVocalRemoval(options);
     });
 
-    // 系统检查和初始化
     ipcMain.handle('vocal-remover:getSystemInfo', async () => {
       if (!this.systemInfo) {
         this.systemInfo = await this.getSystemInfo();
@@ -90,7 +82,6 @@ class VocalRemoverManager {
       return this.systemInfo;
     });
 
-    // 文件选择器
     ipcMain.handle('vocal-remover:selectInputFile', async () => {
       return await this.selectInputFile();
     });
@@ -99,501 +90,608 @@ class VocalRemoverManager {
       return await this.selectOutputDirectory();
     });
 
-    // 路径验证
-    ipcMain.handle('vocal-remover:validatePath', async (event, filePath: string, type: 'input' | 'output') => {
+    ipcMain.handle('vocal-remover:validatePath', async (_event, filePath: string, type: 'input' | 'output') => {
       return await this.validatePath(filePath, type);
     });
 
-    // 取消处理
     ipcMain.handle('vocal-remover:cancel', async () => {
       return await this.cancelProcessing();
     });
 
-    // 获取处理状态
     ipcMain.handle('vocal-remover:getStatus', () => {
-      return { 
+      return {
         isProcessing: this.isProcessing,
-        systemReady: this.systemInfo?.ffmpegAvailable || false
+        systemReady: Boolean(this.systemInfo?.ffmpegAvailable),
+        demucsReady: Boolean(this.systemInfo?.demucsAvailable && this.systemInfo?.demucsModelAvailable)
       };
     });
 
-    // 批量处理
-    ipcMain.handle('vocal-remover:processBatch', async (event, files: string[], outputDir: string, options: Partial<VocalRemovalOptions>) => {
+    ipcMain.handle('vocal-remover:processBatch', async (_event, files: string[], outputDir: string, options: Partial<VocalRemovalOptions>) => {
       return await this.processBatch(files, outputDir, options);
     });
 
-    // 获取算法信息
     ipcMain.handle('vocal-remover:getAlgorithms', () => {
       return this.getAvailableAlgorithms();
     });
 
-    // 测试FFmpeg
     ipcMain.handle('vocal-remover:checkFFmpeg', async () => {
       return await this.testFFmpegInstallation();
     });
 
-    // 获取默认路径
     ipcMain.handle('vocal-remover:getDefaultPaths', () => {
       return this.getDefaultPaths();
     });
   }
 
-  /**
-   * 获取系统信息
-   */
+  private async initializeSystem() {
+    this.systemInfo = await this.getSystemInfo();
+    console.log('伴奏提取系统初始化完成:', this.systemInfo);
+  }
+
   private async getSystemInfo(): Promise<SystemInfo> {
     const ffmpegInfo = await this.detectFFmpeg();
-    const tempDir = os.tmpdir();
-    const platform = os.platform();
-    
+    const demucsInfo = await this.detectDemucs();
+    const modelPath = this.getBundledDemucsModelPath();
+
     return {
       ffmpegAvailable: ffmpegInfo.available,
       ffmpegPath: ffmpegInfo.path,
-      version: ffmpegInfo.version,
-      supportedFormats: ['mp3', 'wav', 'flac', 'm4a', 'aac', 'ogg'],
-      tempDir,
-      platform
+      ffmpegVersion: ffmpegInfo.version,
+      demucsAvailable: demucsInfo.available,
+      demucsPath: demucsInfo.path,
+      demucsModelAvailable: Boolean(modelPath),
+      supportedFormats: this.audioExtensions.map((ext) => ext.slice(1)),
+      tempDir: os.tmpdir(),
+      platform: os.platform()
     };
   }
 
-  /**
-   * 智能检测FFmpeg
-   */
-  private async detectFFmpeg(): Promise<{ available: boolean; path?: string; version?: string }> {
-    const possiblePaths = this.getFFmpegPossiblePaths();
-    
-    for (const ffmpegPath of possiblePaths) {
+  private async processVocalRemoval(options: VocalRemovalOptions): Promise<ProcessingResult> {
+    if (this.isProcessing) {
+      return { success: false, error: '已有处理任务正在进行中' };
+    }
+
+    const startTime = Date.now();
+    let tempDir = '';
+
+    try {
+      if (!this.systemInfo) {
+        this.systemInfo = await this.getSystemInfo();
+      }
+
+      const inputPath = options.inputPath;
+      const validation = await this.validatePath(inputPath, 'input');
+      if (!validation.valid) {
+        return { success: false, error: validation.error || '输入文件不可用', details: validation.details };
+      }
+
+      const outputFilePath = this.resolveOutputFilePath(options);
+      fs.mkdirSync(path.dirname(outputFilePath), { recursive: true });
+
+      this.isProcessing = true;
+      this.sendProgressUpdate('processing', 0, '开始提取伴奏...');
+
+      let method = 'Demucs AI 分离';
+      let success = false;
+      let details = '';
+
       try {
-        console.log(`尝试FFmpeg路径: ${ffmpegPath}`);
-        const result = await this.testFFmpegPath(ffmpegPath);
-        if (result.available) {
-          console.log(`FFmpeg找到: ${ffmpegPath}, 版本: ${result.version}`);
-          return { available: true, path: ffmpegPath, version: result.version };
-        }
+        tempDir = await this.processWithDemucs(inputPath, outputFilePath, options);
+        success = true;
       } catch (error) {
-        console.log(`FFmpeg路径 ${ffmpegPath} 不可用:`, error);
+        details = error instanceof Error ? error.message : String(error);
+        console.warn('Demucs 提取伴奏失败，切换到兼容模式:', details);
+
+        if (!this.systemInfo?.ffmpegAvailable) {
+          throw new Error(`Demucs 不可用，且 FFmpeg 不可用。${details}`);
+        }
+
+        method = 'FFmpeg 兼容模式';
+        this.sendProgressUpdate('processing', 15, 'AI 分离不可用，正在使用兼容模式...');
+        success = await this.processWithCenterCancel(inputPath, outputFilePath, options);
+      }
+
+      if (!success) {
+        throw new Error('伴奏提取失败');
+      }
+
+      const outputStats = fs.statSync(outputFilePath);
+      if (outputStats.size === 0) {
+        throw new Error('输出文件为空');
+      }
+
+      const duration = (Date.now() - startTime) / 1000;
+      this.sendProgressUpdate('completed', 100, '伴奏提取完成');
+
+      return {
+        success: true,
+        outputPath: outputFilePath,
+        duration,
+        details: `${method}完成，文件大小 ${this.formatFileSize(outputStats.size)}${details ? `；兼容信息：${details}` : ''}`
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '未知错误';
+      console.error('伴奏提取失败:', error);
+      this.sendProgressUpdate('failed', 0, `伴奏提取失败: ${message}`);
+      return {
+        success: false,
+        error: message,
+        details: '请确认音频文件可以正常播放，或换一个输出目录后重试。'
+      };
+    } finally {
+      this.isProcessing = false;
+      this.currentProcess = null;
+      if (tempDir) {
+        fs.rmSync(tempDir, { recursive: true, force: true });
       }
     }
-    
-    console.error('未找到可用的FFmpeg安装');
+  }
+
+  private async processWithDemucs(inputPath: string, outputPath: string, options: VocalRemovalOptions): Promise<string> {
+    const demucsPath = this.systemInfo?.demucsPath || (await this.detectDemucs()).path;
+    const ffmpegPath = this.systemInfo?.ffmpegPath || (await this.detectFFmpeg()).path;
+
+    if (!demucsPath) {
+      throw new Error('未找到 Demucs 伴奏分离程序');
+    }
+    if (!ffmpegPath) {
+      throw new Error('未找到 FFmpeg，无法合成伴奏文件');
+    }
+
+    this.ensureDemucsModelCached();
+
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wmp-demucs-'));
+    const stemsDir = path.join(tempDir, 'stems');
+    fs.mkdirSync(stemsDir, { recursive: true });
+
+    this.sendProgressUpdate('processing', 5, '正在加载 AI 伴奏分离模型...');
+
+    const demucsResult = await this.runCommand(
+      demucsPath,
+      ['-m', this.demucsModel, '-s', 'drums,bass,other', '-o', stemsDir, inputPath],
+      {
+        onData: (chunk) => this.handleDemucsOutput(chunk)
+      }
+    );
+
+    if (!demucsResult.success) {
+      throw new Error(this.summarizeProcessError('Demucs', demucsResult.output));
+    }
+
+    const stemPaths = ['drums.wav', 'bass.wav', 'other.wav'].map((name) => path.join(stemsDir, name));
+    const missingStem = stemPaths.find((stemPath) => !fs.existsSync(stemPath));
+    if (missingStem) {
+      throw new Error(`Demucs 未生成必要的伴奏分轨: ${path.basename(missingStem)}`);
+    }
+
+    this.sendProgressUpdate('processing', 86, '正在合成伴奏文件...');
+    await this.mixInstrumentalStems(ffmpegPath, stemPaths, outputPath, options);
+    return tempDir;
+  }
+
+  private async mixInstrumentalStems(ffmpegPath: string, stemPaths: string[], outputPath: string, options: VocalRemovalOptions) {
+    const codecArgs = this.getAudioCodecArgs(outputPath, options);
+    const args = [
+      '-y',
+      '-i', stemPaths[0],
+      '-i', stemPaths[1],
+      '-i', stemPaths[2],
+      '-filter_complex', '[0:a][1:a][2:a]amix=inputs=3:duration=longest:dropout_transition=0:normalize=0,alimiter=limit=0.98[a]',
+      '-map', '[a]',
+      ...codecArgs,
+      outputPath
+    ];
+
+    const result = await this.runCommand(ffmpegPath, args, {
+      onData: (chunk) => {
+        const progress = this.parseFFmpegProgress(chunk, 86, 98);
+        if (progress !== null) {
+          this.sendProgressUpdate('processing', progress, `正在合成伴奏... ${Math.round(progress)}%`);
+        }
+      }
+    });
+
+    if (!result.success) {
+      throw new Error(this.summarizeProcessError('FFmpeg 合成', result.output));
+    }
+  }
+
+  private async processWithCenterCancel(inputPath: string, outputPath: string, options: VocalRemovalOptions): Promise<boolean> {
+    const ffmpegPath = this.systemInfo?.ffmpegPath || 'ffmpeg';
+    const codecArgs = this.getAudioCodecArgs(outputPath, options);
+    const args = [
+      '-y',
+      '-i', inputPath,
+      '-filter_complex', this.getCenterCancelFilter(),
+      '-map', '[a]',
+      ...codecArgs,
+      outputPath
+    ];
+
+    const result = await this.runCommand(ffmpegPath, args, {
+      onData: (chunk) => {
+        const progress = this.parseFFmpegProgress(chunk, 15, 98);
+        if (progress !== null) {
+          this.sendProgressUpdate('processing', progress, `正在提取伴奏... ${Math.round(progress)}%`);
+        }
+      }
+    });
+
+    if (!result.success) {
+      console.error('FFmpeg 兼容模式失败:', result.output);
+    }
+
+    return result.success;
+  }
+
+  private getCenterCancelFilter(): string {
+    return [
+      '[0:a]aformat=channel_layouts=stereo,asplit=2[orig][work]',
+      '[work]pan=stereo|c0=c0-c1|c1=c1-c0,highpass=f=120,volume=1.25[side]',
+      '[orig]lowpass=f=140,volume=0.55[bass]',
+      '[side][bass]amix=inputs=2:duration=longest:dropout_transition=0:normalize=0,alimiter=limit=0.98[a]'
+    ].join(';');
+  }
+
+  private async runCommand(
+    command: string,
+    args: string[],
+    options: { onData?: (chunk: string) => void } = {}
+  ): Promise<ProcessRunResult> {
+    return await new Promise((resolve) => {
+      let output = '';
+      const child = spawn(command, args, {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: {
+          ...process.env,
+          LC_ALL: 'zh_CN.UTF-8',
+          LANG: 'zh_CN.UTF-8'
+        }
+      });
+
+      this.currentProcess = child;
+
+      const handleData = (data: Buffer) => {
+        const chunk = data.toString();
+        output += chunk;
+        options.onData?.(chunk);
+      };
+
+      child.stdout?.on('data', handleData);
+      child.stderr?.on('data', handleData);
+
+      child.on('error', (error) => {
+        output += `\n${error.message}`;
+      });
+
+      child.on('close', (code) => {
+        if (this.currentProcess === child) {
+          this.currentProcess = null;
+        }
+        resolve({ success: code === 0, output, code });
+      });
+    });
+  }
+
+  private handleDemucsOutput(chunk: string) {
+    const text = chunk.toLowerCase();
+    if (text.includes('loading cached model') || text.includes('downloading')) {
+      this.sendProgressUpdate('processing', 10, '正在准备 AI 模型...');
+    } else if (text.includes('reading')) {
+      this.sendProgressUpdate('processing', 18, '正在读取音频...');
+    } else if (text.includes('loading model')) {
+      this.sendProgressUpdate('processing', 25, '正在加载 AI 模型...');
+    } else if (text.includes('pre-compiling')) {
+      this.sendProgressUpdate('processing', 32, '首次运行正在准备 GPU 加速...');
+    } else if (text.includes('separating')) {
+      this.sendProgressUpdate('processing', 42, '正在分离整首歌的伴奏...');
+    } else if (text.includes('wrote')) {
+      this.sendProgressUpdate('processing', 82, '伴奏分轨已生成...');
+    }
+  }
+
+  private parseFFmpegProgress(chunk: string, minProgress: number, maxProgress: number): number | null {
+    const durationMatch = chunk.match(/Duration:\s*(\d{2}):(\d{2}):(\d{2}(?:\.\d+)?)/);
+    const timeMatch = chunk.match(/time=(\d{2}):(\d{2}):(\d{2}(?:\.\d+)?)/);
+
+    const getSeconds = (match: RegExpMatchArray) =>
+      Number(match[1]) * 3600 + Number(match[2]) * 60 + Number(match[3]);
+
+    const duration = durationMatch ? getSeconds(durationMatch) : null;
+    const current = timeMatch ? getSeconds(timeMatch) : null;
+
+    if (!duration || !current) {
+      return null;
+    }
+
+    return Math.min(maxProgress, minProgress + (current / duration) * (maxProgress - minProgress));
+  }
+
+  private ensureDemucsModelCached() {
+    const bundledModel = this.getBundledDemucsModelPath();
+    if (!bundledModel) {
+      throw new Error('未找到内置 Demucs 模型文件');
+    }
+
+    const cacheDir = this.getDemucsCacheDir();
+    const cacheModel = path.join(cacheDir, this.modelFileName);
+    fs.mkdirSync(cacheDir, { recursive: true });
+
+    const bundledSize = fs.statSync(bundledModel).size;
+    const needsCopy = !fs.existsSync(cacheModel) || fs.statSync(cacheModel).size !== bundledSize;
+
+    if (needsCopy) {
+      fs.copyFileSync(bundledModel, cacheModel);
+    }
+  }
+
+  private getDemucsCacheDir(): string {
+    if (process.platform === 'win32') {
+      return path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'demucs-rs');
+    }
+    if (process.platform === 'darwin') {
+      return path.join(os.homedir(), 'Library', 'Caches', 'demucs-rs');
+    }
+    return path.join(process.env.XDG_CACHE_HOME || path.join(os.homedir(), '.cache'), 'demucs-rs');
+  }
+
+  private getBundledDemucsModelPath(): string | null {
+    const candidates = this.uniquePaths([
+      path.join(process.cwd(), 'resources', 'demucs', 'models', this.modelFileName),
+      path.join(app.getAppPath(), 'resources', 'demucs', 'models', this.modelFileName),
+      path.join(process.resourcesPath || '', 'demucs', 'models', this.modelFileName),
+      path.join(process.resourcesPath || '', 'app.asar.unpacked', 'resources', 'demucs', 'models', this.modelFileName),
+      path.join(__dirname, '..', 'resources', 'demucs', 'models', this.modelFileName)
+    ]);
+
+    return candidates.find((candidate) => candidate && fs.existsSync(candidate)) || null;
+  }
+
+  private async detectDemucs(): Promise<{ available: boolean; path?: string }> {
+    const executableName = process.platform === 'win32' ? 'demucs.exe' : 'demucs';
+    const platformDir = process.platform === 'darwin' ? 'mac' : process.platform === 'win32' ? 'win' : 'linux';
+    const executableDir = path.dirname(process.execPath);
+
+    const candidates = this.uniquePaths([
+      process.env.WMP_DEMUCS_PATH || '',
+      path.join(process.cwd(), 'resources', 'demucs', platformDir, executableName),
+      path.join(app.getAppPath(), 'resources', 'demucs', platformDir, executableName),
+      path.join(process.resourcesPath || '', 'demucs', platformDir, executableName),
+      path.join(process.resourcesPath || '', 'app.asar.unpacked', 'resources', 'demucs', platformDir, executableName),
+      path.join(executableDir, 'resources', 'demucs', platformDir, executableName),
+      path.join(executableDir, '..', 'Resources', 'demucs', platformDir, executableName),
+      executableName
+    ]);
+
+    for (const candidate of candidates) {
+      if (!candidate) continue;
+      try {
+        if (candidate !== executableName && !fs.existsSync(candidate)) {
+          continue;
+        }
+        const result = await this.testExecutable(candidate, ['--help'], 'Separate audio stems');
+        if (result) {
+          return { available: true, path: candidate };
+        }
+      } catch {
+        continue;
+      }
+    }
+
     return { available: false };
   }
 
-  /**
-   * 获取FFmpeg可能的路径
-   */
-  private getFFmpegPossiblePaths(): string[] {
-    const platform = os.platform();
-    let paths = ['ffmpeg']; // 先尝试PATH中的ffmpeg
-    
-    if (platform === 'win32') {
-      // Windows: 优先使用系统安装的 FFmpeg (通过 winget 安装)
-      paths = paths.concat([
-        'ffmpeg.exe',
-        path.join(process.cwd(), 'ffmpeg.exe'),
-        path.join(process.cwd(), 'bin', 'ffmpeg.exe'),
-        path.join(app.getPath('userData'), 'bin', 'ffmpeg.exe'),
-        'C:\\ffmpeg\\bin\\ffmpeg.exe',
-        'C:\\Program Files\\FFmpeg\\bin\\ffmpeg.exe',
-        'C:\\Program Files (x86)\\FFmpeg\\bin\\ffmpeg.exe'
-      ]);
-      
-      // 只有在系统 FFmpeg 不可用时才使用打包版本
-      if (app.isPackaged) {
-        const ffmpegName = 'ffmpeg.exe';
-        const appPath = path.dirname(process.resourcesPath);  // Contents目录
-        paths.push(path.join(appPath, 'ffmpeg', ffmpegName));
-      }
-    } else if (platform === 'darwin') {
-      // macOS: 优先使用系统安装的 FFmpeg
-      paths = paths.concat([
-        '/usr/local/bin/ffmpeg',
-        '/opt/homebrew/bin/ffmpeg',
-        '/usr/bin/ffmpeg',
-        path.join(process.cwd(), 'ffmpeg'),
-        path.join(app.getPath('userData'), 'bin', 'ffmpeg')
-      ]);
-      
-      // 打包版本的 FFmpeg 路径
-      if (app.isPackaged) {
-        const ffmpegName = 'ffmpeg';
-        // 修复：FFmpeg 在 Resources 目录下，不是 Contents 目录
-        // process.resourcesPath 已经指向 Contents/Resources
-        paths.push(path.join(process.resourcesPath, 'ffmpeg', ffmpegName));
-        // 备用路径
-        paths.push(path.join(process.resourcesPath, '..', 'Resources', 'ffmpeg', ffmpegName));
-      }
-    } else {
-      // Linux: 优先使用系统安装的 FFmpeg
-      paths = paths.concat([
-        '/usr/bin/ffmpeg',
-        '/usr/local/bin/ffmpeg',
-        '/opt/ffmpeg/bin/ffmpeg',
-        path.join(process.cwd(), 'ffmpeg'),
-        path.join(app.getPath('userData'), 'bin', 'ffmpeg')
-      ]);
-      
-      // 只有在系统 FFmpeg 不可用时才使用打包版本
-      if (app.isPackaged) {
-        const ffmpegName = 'ffmpeg';
-        const appPath = path.dirname(process.resourcesPath);  // Contents目录
-        paths.push(path.join(appPath, 'ffmpeg', ffmpegName));
+  private async detectFFmpeg(): Promise<{ available: boolean; path?: string; version?: string }> {
+    const executableName = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
+    const executableDir = path.dirname(process.execPath);
+
+    const candidates = this.uniquePaths([
+      process.env.FFMPEG_PATH || '',
+      path.join(process.cwd(), 'resources', 'ffmpeg', executableName),
+      path.join(app.getAppPath(), 'resources', 'ffmpeg', executableName),
+      path.join(process.resourcesPath || '', 'ffmpeg', executableName),
+      path.join(executableDir, 'ffmpeg', executableName),
+      path.join(executableDir, '..', 'Resources', 'ffmpeg', executableName),
+      'ffmpeg',
+      'ffmpeg.exe',
+      'C:\\ffmpeg\\bin\\ffmpeg.exe',
+      'C:\\Program Files\\FFmpeg\\bin\\ffmpeg.exe',
+      '/opt/homebrew/bin/ffmpeg',
+      '/usr/local/bin/ffmpeg',
+      '/usr/bin/ffmpeg'
+    ]);
+
+    for (const candidate of candidates) {
+      if (!candidate) continue;
+      try {
+        if (!['ffmpeg', 'ffmpeg.exe'].includes(candidate) && !fs.existsSync(candidate)) {
+          continue;
+        }
+        const version = await this.getFFmpegVersion(candidate);
+        if (version) {
+          return { available: true, path: candidate, version };
+        }
+      } catch {
+        continue;
       }
     }
-    
-    return paths;
+
+    return { available: false };
   }
 
-  /**
-   * 测试特定FFmpeg路径
-   */
-  private async testFFmpegPath(ffmpegPath: string): Promise<{ available: boolean; version?: string }> {
-    return new Promise((resolve) => {
-      const process = spawn(ffmpegPath, ['-version'], { 
-        stdio: ['ignore', 'pipe', 'pipe'],
-        timeout: 5000
-      });
-      
+  private async getFFmpegVersion(ffmpegPath: string): Promise<string | undefined> {
+    return await new Promise((resolve) => {
+      const child = spawn(ffmpegPath, ['-version'], { stdio: ['ignore', 'pipe', 'pipe'] });
       let output = '';
-      
-      process.stdout?.on('data', (data: Buffer) => {
+
+      child.stdout?.on('data', (data: Buffer) => {
         output += data.toString();
       });
-      
-      process.on('error', (error) => {
-        console.log(`FFmpeg路径测试失败 ${ffmpegPath}:`, error.message);
-        resolve({ available: false });
-      });
-      
-      process.on('close', (code) => {
-        if (code === 0 && output.includes('ffmpeg version')) {
-          // 提取版本信息
-          const versionMatch = output.match(/ffmpeg version ([^\s]+)/);
-          const version = versionMatch ? versionMatch[1] : 'unknown';
-          resolve({ available: true, version });
-        } else {
-          resolve({ available: false });
+
+      child.on('error', () => resolve(undefined));
+      child.on('close', (code) => {
+        if (code !== 0 || !output.includes('ffmpeg version')) {
+          resolve(undefined);
+          return;
         }
+        resolve(output.match(/ffmpeg version ([^\s]+)/)?.[1] || 'unknown');
       });
-      
-      // 设置超时
+
       setTimeout(() => {
-        if (!process.killed) {
-          process.kill();
-          resolve({ available: false });
+        if (!child.killed) {
+          child.kill();
+          resolve(undefined);
         }
       }, 5000);
     });
   }
 
-  /**
-   * 测试FFmpeg滤镜可用性
-   */
-  private async testFilterAvailability(filterName: string): Promise<boolean> {
-    return new Promise((resolve) => {
-      const ffmpegPath = this.systemInfo?.ffmpegPath || 'ffmpeg';
-      const process = spawn(ffmpegPath, ['-filters'], { stdio: ['ignore', 'pipe', 'pipe'] });
-      
+  private async testExecutable(command: string, args: string[], expectedText: string): Promise<boolean> {
+    return await new Promise((resolve) => {
+      const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'] });
       let output = '';
-      
-      process.stdout?.on('data', (data: Buffer) => {
+
+      child.stdout?.on('data', (data: Buffer) => {
         output += data.toString();
       });
-      
-      process.on('close', (code) => {
-        if (code === 0) {
-          resolve(output.includes(filterName));
-        } else {
-          resolve(false);
-        }
+      child.stderr?.on('data', (data: Buffer) => {
+        output += data.toString();
       });
-      
-      process.on('error', () => {
-        resolve(false);
-      });
-      
+
+      child.on('error', () => resolve(false));
+      child.on('close', () => resolve(output.includes(expectedText)));
+
       setTimeout(() => {
-        if (!process.killed) {
-          process.kill();
+        if (!child.killed) {
+          child.kill();
           resolve(false);
         }
-      }, 3000);
+      }, 5000);
     });
   }
 
-  /**
-   * 测试FFmpeg完整功能
-   */
-  private async testFFmpegInstallation(): Promise<{ available: boolean; details: string; suggestions?: string[] }> {
-    if (!this.systemInfo?.ffmpegAvailable) {
-      return {
-        available: false,
-        details: 'FFmpeg未安装或不在PATH中',
-        suggestions: this.getFFmpegInstallationSuggestions()
-      };
+  private getAudioCodecArgs(outputPath: string, options: VocalRemovalOptions): string[] {
+    const outputExt = path.extname(outputPath).toLowerCase();
+    const quality = options.quality || 'high';
+
+    if (outputExt === '.wav') {
+      return ['-codec:a', 'pcm_s16le'];
+    }
+    if (outputExt === '.flac') {
+      return ['-codec:a', 'flac', '-compression_level', quality === 'ultra' ? '12' : '8'];
+    }
+    if (outputExt === '.m4a' || outputExt === '.aac') {
+      return ['-codec:a', 'aac', '-b:a', quality === 'ultra' ? '256k' : '192k'];
+    }
+    if (outputExt === '.ogg') {
+      return ['-codec:a', 'libvorbis', '-b:a', quality === 'ultra' ? '320k' : '256k'];
     }
 
-    try {
-      // 测试基本功能
-      const testResult = await this.testFFmpegBasicFunction();
-      if (!testResult.success) {
-        return {
-          available: false,
-          details: `FFmpeg功能测试失败: ${testResult.error}`,
-          suggestions: ['检查FFmpeg是否完整安装', '确认FFmpeg支持音频编解码器']
-        };
-      }
+    return ['-codec:a', 'libmp3lame', '-b:a', quality === 'ultra' ? '320k' : '256k'];
+  }
 
-      return {
-        available: true,
-        details: `FFmpeg可用 (版本: ${this.systemInfo.version})`
-      };
-    } catch (error) {
-      return {
-        available: false,
-        details: `FFmpeg测试异常: ${error}`,
-        suggestions: ['重新安装FFmpeg', '检查系统权限']
-      };
+  private resolveOutputFilePath(options: VocalRemovalOptions): string {
+    const rawOutput = options.outputPath;
+    const rawExt = path.extname(rawOutput);
+
+    if (rawExt) {
+      return rawOutput;
     }
+
+    const inputName = path.basename(options.inputPath || 'output', path.extname(options.inputPath || ''));
+    const fileName = options.outputFileName || `${inputName}_伴奏.mp3`;
+    return path.join(rawOutput, fileName);
   }
 
-  /**
-   * 测试FFmpeg基本功能
-   */
-  private async testFFmpegBasicFunction(): Promise<{ success: boolean; error?: string }> {
-    return new Promise((resolve) => {
-      const ffmpegPath = this.systemInfo?.ffmpegPath || 'ffmpeg';
-      const process = spawn(ffmpegPath, ['-f', 'lavfi', '-i', 'sine=frequency=440:duration=1', '-f', 'null', '-'], {
-        stdio: ['ignore', 'ignore', 'pipe']
-      });
-
-      let errorOutput = '';
-      
-      process.stderr?.on('data', (data: Buffer) => {
-        errorOutput += data.toString();
-      });
-
-      process.on('error', (error) => {
-        resolve({ success: false, error: error.message });
-      });
-
-      process.on('close', (code) => {
-        if (code === 0) {
-          resolve({ success: true });
-        } else {
-          resolve({ success: false, error: errorOutput });
-        }
-      });
-
-      setTimeout(() => {
-        if (!process.killed) {
-          process.kill();
-          resolve({ success: false, error: '测试超时' });
-        }
-      }, 10000);
-    });
-  }
-
-  /**
-   * 获取FFmpeg安装建议
-   */
-  private getFFmpegInstallationSuggestions(): string[] {
-    const platform = os.platform();
-    
-    switch (platform) {
-      case 'win32':
-        return [
-          '从 https://ffmpeg.org/download.html 下载FFmpeg',
-          '解压到 C:\\ffmpeg 目录',
-          '将 C:\\ffmpeg\\bin 添加到系统PATH环境变量',
-          '或者将ffmpeg.exe放在应用程序目录下'
-        ];
-      case 'darwin':
-        return [
-          '使用Homebrew安装: brew install ffmpeg',
-          '或从 https://ffmpeg.org/download.html 下载',
-          '确保FFmpeg在/usr/local/bin目录中'
-        ];
-      default:
-        return [
-          '使用包管理器安装: sudo apt install ffmpeg (Ubuntu)',
-          '或使用: sudo yum install ffmpeg (CentOS)',
-          '或从源码编译安装'
-        ];
-    }
-  }
-
-  /**
-   * 文件选择器
-   */
   private async selectInputFile(): Promise<{ success: boolean; path?: string; error?: string }> {
-    try {
-      if (!this.mainWindow) {
-        return { success: false, error: '主窗口未初始化' };
-      }
-
-      const result = await dialog.showOpenDialog(this.mainWindow, {
-        title: '选择音频文件',
-        filters: [
-          { name: '音频文件', extensions: ['mp3', 'wav', 'flac', 'm4a', 'aac', 'ogg', 'wma'] },
-          { name: '所有文件', extensions: ['*'] }
-        ],
-        properties: ['openFile'],
-        defaultPath: this.getDefaultInputPath()
-      });
-
-      if (result.canceled || !result.filePaths.length) {
-        return { success: false, error: '用户取消选择' };
-      }
-
-      const selectedPath = result.filePaths[0];
-      
-      // 验证文件
-      const validation = await this.validatePath(selectedPath, 'input');
-      if (!validation.valid) {
-        return { success: false, error: validation.error };
-      }
-
-      return { success: true, path: selectedPath };
-    } catch (error) {
-      console.error('文件选择失败:', error);
-      return { 
-        success: false, 
-        error: error instanceof Error ? error.message : '文件选择失败' 
-      };
+    if (!this.mainWindow) {
+      return { success: false, error: '主窗口未初始化' };
     }
+
+    const result = await dialog.showOpenDialog(this.mainWindow, {
+      title: '选择音频文件',
+      filters: [
+        { name: '音频文件', extensions: this.audioExtensions.map((ext) => ext.slice(1)) },
+        { name: '所有文件', extensions: ['*'] }
+      ],
+      properties: ['openFile'],
+      defaultPath: this.getDefaultInputPath()
+    });
+
+    if (result.canceled || result.filePaths.length === 0) {
+      return { success: false, error: '已取消选择' };
+    }
+
+    return { success: true, path: result.filePaths[0] };
   }
 
-  /**
-   * 输出目录选择器
-   */
   private async selectOutputDirectory(): Promise<{ success: boolean; path?: string; error?: string }> {
-    try {
-      if (!this.mainWindow) {
-        return { success: false, error: '主窗口未初始化' };
-      }
-
-      const result = await dialog.showOpenDialog(this.mainWindow, {
-        title: '选择输出目录',
-        properties: ['openDirectory', 'createDirectory'],
-        defaultPath: this.getDefaultOutputPath()
-      });
-
-      if (result.canceled || !result.filePaths.length) {
-        return { success: false, error: '用户取消选择' };
-      }
-
-      const selectedPath = result.filePaths[0];
-      
-      // 验证目录权限
-      const validation = await this.validatePath(selectedPath, 'output');
-      if (!validation.valid) {
-        return { success: false, error: validation.error };
-      }
-
-      return { success: true, path: selectedPath };
-    } catch (error) {
-      console.error('目录选择失败:', error);
-      return { 
-        success: false, 
-        error: error instanceof Error ? error.message : '目录选择失败' 
-      };
+    if (!this.mainWindow) {
+      return { success: false, error: '主窗口未初始化' };
     }
+
+    const result = await dialog.showOpenDialog(this.mainWindow, {
+      title: '选择输出目录',
+      properties: ['openDirectory', 'createDirectory'],
+      defaultPath: this.getDefaultOutputPath()
+    });
+
+    if (result.canceled || result.filePaths.length === 0) {
+      return { success: false, error: '已取消选择' };
+    }
+
+    return { success: true, path: result.filePaths[0] };
   }
 
-  /**
-   * 路径验证
-   */
   private async validatePath(filePath: string, type: 'input' | 'output'): Promise<{ valid: boolean; error?: string; details?: string }> {
     try {
-      // 检查路径是否存在
-      try {
-        await access(filePath, fs.constants.F_OK);
-      } catch {
-        if (type === 'input') {
-          return { valid: false, error: '输入文件不存在', details: `路径: ${filePath}` };
-        }
-        // 输出路径不存在时尝试创建
-        try {
-          await mkdir(filePath, { recursive: true });
-        } catch (mkdirError) {
-          return { 
-            valid: false, 
-            error: '无法创建输出目录', 
-            details: `路径: ${filePath}, 错误: ${mkdirError}` 
-          };
-        }
+      if (!filePath) {
+        return { valid: false, error: type === 'input' ? '请选择输入文件' : '请选择输出目录' };
       }
 
-      const stats = await stat(filePath);
-
       if (type === 'input') {
-        // 验证输入文件
+        if (!fs.existsSync(filePath)) {
+          return { valid: false, error: '输入文件不存在', details: filePath };
+        }
+        const stats = fs.statSync(filePath);
         if (!stats.isFile()) {
           return { valid: false, error: '输入路径不是文件', details: filePath };
         }
-
-        // 检查文件大小
         if (stats.size === 0) {
           return { valid: false, error: '输入文件为空', details: filePath };
         }
-
-        // 检查文件扩展名
         const ext = path.extname(filePath).toLowerCase();
-        const supportedExts = ['.mp3', '.wav', '.flac', '.m4a', '.aac', '.ogg', '.wma'];
-        if (!supportedExts.includes(ext)) {
-          return { 
-            valid: false, 
-            error: '不支持的文件格式', 
-            details: `文件: ${filePath}, 支持的格式: ${supportedExts.join(', ')}` 
-          };
+        if (!this.audioExtensions.includes(ext)) {
+          return { valid: false, error: '不支持的音频格式', details: `支持格式: ${this.audioExtensions.join(', ')}` };
         }
-
-        // 检查读取权限
-        try {
-          await access(filePath, fs.constants.R_OK);
-        } catch {
-          return { valid: false, error: '没有文件读取权限', details: filePath };
-        }
+        fs.accessSync(filePath, fs.constants.R_OK);
       } else {
-        // 验证输出目录
+        fs.mkdirSync(filePath, { recursive: true });
+        const stats = fs.statSync(filePath);
         if (!stats.isDirectory()) {
           return { valid: false, error: '输出路径不是目录', details: filePath };
         }
-
-        // 检查写入权限
-        try {
-          await access(filePath, fs.constants.W_OK);
-        } catch {
-          return { valid: false, error: '没有目录写入权限', details: filePath };
-        }
+        fs.accessSync(filePath, fs.constants.W_OK);
       }
 
       return { valid: true };
     } catch (error) {
-      console.error('路径验证失败:', error);
-      return { 
-        valid: false, 
-        error: '路径验证失败', 
-        details: error instanceof Error ? error.message : '未知错误' 
+      return {
+        valid: false,
+        error: type === 'input' ? '无法读取输入文件' : '无法写入输出目录',
+        details: error instanceof Error ? error.message : String(error)
       };
     }
   }
 
-  /**
-   * 获取默认路径
-   */
   private getDefaultPaths() {
     return {
-      input: app.getPath('music'),
-      output: path.join(app.getPath('documents'), '人声消除输出'),
+      input: this.getDefaultInputPath(),
+      output: this.getDefaultOutputPath(),
       temp: os.tmpdir()
     };
   }
 
-  /**
-   * 获取默认输入路径
-   */
   private getDefaultInputPath(): string {
     try {
       return app.getPath('music');
@@ -602,914 +700,100 @@ class VocalRemoverManager {
     }
   }
 
-  /**
-   * 获取默认输出路径
-   */
   private getDefaultOutputPath(): string {
     try {
-      const documentsPath = app.getPath('documents');
-      const outputPath = path.join(documentsPath, '人声消除输出');
-      // 确保目录存在
-      if (!fs.existsSync(outputPath)) {
-        fs.mkdirSync(outputPath, { recursive: true });
-      }
-      return outputPath;
+      return app.getPath('desktop');
     } catch {
       return app.getPath('home');
     }
   }
 
-  /**
-   * 处理人声消除 - 完全重写，简化逻辑
-   */
-  private async processVocalRemoval(options: VocalRemovalOptions): Promise<ProcessingResult> {
-    console.log('=== 人声消除处理开始 ===');
-    console.log('接收到的参数:', JSON.stringify(options, null, 2));
-    
-    try {
-      // 1. 检查是否正在处理
-      if (this.isProcessing) {
-        return { success: false, error: '已有处理任务在进行中' };
-      }
-
-      // 2. 检查FFmpeg
-      if (!this.systemInfo?.ffmpegAvailable) {
-        return { 
-          success: false, 
-          error: 'FFmpeg不可用',
-          details: 'FFmpeg未安装或配置不正确'
-        };
-      }
-
-      // 3. 验证输入文件
-      const inputPath = options.inputPath;
-      if (!fs.existsSync(inputPath)) {
-        return { 
-          success: false, 
-          error: '输入文件不存在', 
-          details: inputPath 
-        };
-      }
-      console.log('✓ 输入文件存在:', inputPath);
-
-      // 4. 构建输出文件完整路径 - 关键修复
-      const outputDir = options.outputPath;  // 这是目录
-      const outputFileName = options.outputFileName || 'output.mp3';  // 这是文件名
-      const outputFilePath = path.join(outputDir, outputFileName);  // 拼接完整路径
-      
-      console.log('输出目录:', outputDir);
-      console.log('输出文件名:', outputFileName);
-      console.log('输出完整路径:', outputFilePath);
-
-      // 5. 确保输出目录存在
-      if (!fs.existsSync(outputDir)) {
-        console.log('创建输出目录:', outputDir);
-        fs.mkdirSync(outputDir, { recursive: true });
-      }
-      console.log('✓ 输出目录已准备');
-
-      // 6. 开始处理
-      this.isProcessing = true;
-      const startTime = Date.now();
-      this.sendProgressUpdate('processing', 0, '开始处理...');
-
-      // 7. 构建滤镜
-      const filter = this.buildCompatibleAudioFilter(options);
-      console.log('使用滤镜:', filter);
-      
-      // 8. 执行FFmpeg
-      console.log('开始执行FFmpeg...');
-      const success = await this.executeFFmpeg(
-        inputPath, 
-        outputFilePath,  // 传递完整的文件路径
-        filter, 
-        options
-      );
-      
-      const duration = Date.now() - startTime;
-      this.isProcessing = false;
-
-      // 9. 检查结果
-      if (success) {
-        if (fs.existsSync(outputFilePath)) {
-          const stats = fs.statSync(outputFilePath);
-          if (stats.size === 0) {
-            return { 
-              success: false, 
-              error: '输出文件为空', 
-              details: '处理完成但文件大小为0' 
-            };
-          }
-
-          console.log('✓ 处理成功，文件大小:', stats.size);
-          this.sendProgressUpdate('completed', 100, '处理完成');
-          return { 
-            success: true, 
-            outputPath: outputFilePath,
-            duration: duration / 1000,
-            details: `处理完成，文件大小: ${this.formatFileSize(stats.size)}`
-          };
-        } else {
-          return { 
-            success: false, 
-            error: '输出文件未生成',
-            details: `期望路径: ${outputFilePath}`
-          };
+  private getAvailableAlgorithms() {
+    return {
+      algorithms: {
+        demucs: {
+          name: 'AI 提取伴奏',
+          description: '使用 Demucs 将整首歌分离为鼓、贝斯、其他乐器和人声，再合成无人声伴奏。',
+          quality: 'high',
+          speed: 'slow',
+          recommended: true,
+          compatible: Boolean(this.systemInfo?.demucsAvailable && this.systemInfo?.demucsModelAvailable)
+        },
+        center_cancel: {
+          name: '兼容模式',
+          description: '使用声道相位抵消提取伴奏，速度快，但只适合人声居中的歌曲。',
+          quality: 'medium',
+          speed: 'fast',
+          recommended: false,
+          compatible: Boolean(this.systemInfo?.ffmpegAvailable)
         }
-      } else {
-        return { 
-          success: false, 
-          error: 'FFmpeg处理失败',
-          details: '请检查输入文件格式'
-        };
-      }
-    } catch (error) {
-      this.isProcessing = false;
-      console.error('处理异常:', error);
-      return { 
-        success: false, 
-        error: error instanceof Error ? error.message : '未知错误',
-        details: '处理过程中发生异常'
+      },
+      systemReady: Boolean(this.systemInfo?.ffmpegAvailable),
+      demucsReady: Boolean(this.systemInfo?.demucsAvailable && this.systemInfo?.demucsModelAvailable),
+      note: '默认使用 AI 提取伴奏；如果本机 GPU/驱动不支持，会自动切换兼容模式。'
+    };
+  }
+
+  private async testFFmpegInstallation(): Promise<{ available: boolean; details: string; suggestions?: string[] }> {
+    const ffmpegInfo = await this.detectFFmpeg();
+    if (!ffmpegInfo.available) {
+      return {
+        available: false,
+        details: 'FFmpeg 不可用',
+        suggestions: ['请确认应用资源目录中包含 FFmpeg，或将 FFmpeg 加入系统 PATH。']
       };
     }
+    return { available: true, details: `FFmpeg 可用 (${ffmpegInfo.version || 'unknown'})` };
   }
 
-  /**
-   * 构建兼容的音频滤镜 - 修复FFmpeg 8.0兼容性问题
-   */
-  private buildCompatibleAudioFilter(options: VocalRemovalOptions): string {
-    try {
-      const rnnoiseModel = this.getRNNoiseModelPath();
-      if (rnnoiseModel) {
-        const modelPath = this.escapeFilterPath(rnnoiseModel);
-        return [
-          `arnndn=m='${modelPath}':mix=-1`,
-          'afftdn=nr=8:nf=-28:tn=1',
-          'anlmdn=s=0.00004:p=0.003:r=0.018',
-          'acompressor=threshold=0.18:ratio=2.2:attack=8:release=80:makeup=1.4',
-          'alimiter=limit=0.98'
-        ].join(',');
-      }
-
-      return [
-        'afftdn=nr=10:nf=-30:tn=1',
-        'anlmdn=s=0.00005:p=0.003:r=0.018',
-        'equalizer=f=1000:t=q:w=2:g=-1.5',
-        'equalizer=f=2500:t=q:w=2:g=-2.5',
-        'acompressor=threshold=0.2:ratio=2:attack=10:release=80:makeup=1.2',
-        'alimiter=limit=0.98'
-      ].join(',');
-
-      const algorithm = options.algorithm || 'karaoke';
-      const quality = options.quality || 'high';
-      
-      let filter = '';
-      
-      switch (algorithm) {
-        case 'spectral':
-          filter = this.buildCompatibleSpectralFilter(options);
-          break;
-        case 'wiener':
-          filter = this.buildCompatibleWienerFilter(options);
-          break;
-        case 'bss':
-          filter = this.buildCompatibleBSSFilter(options);
-          break;
-        case 'hpss':
-          filter = this.buildCompatibleHPSSFilter(options);
-          break;
-        case 'multistage':
-          filter = this.buildCompatibleMultistageFilter(options);
-          break;
-        case 'spectral_gating':
-          filter = this.buildCompatibleSpectralGatingFilter(options);
-          break;
-        case 'phase':
-          filter = this.buildPhaseFilter(options);
-          break;
-        case 'bandpass':
-          filter = this.buildBandpassFilter(options);
-          break;
-        case 'highpass':
-          filter = this.buildHighpassFilter(options);
-          break;
-        case 'karaoke':
-        default:
-          filter = this.buildKaraokeFilter(options);
-          break;
-      }
-      
-      // 添加低音和高音保护
-      if (options.preserveBass) {
-        filter = `${filter},equalizer=f=60:t=q:w=0.5:g=3`;
-      }
-      if (options.preserveHighs) {
-        filter = `${filter},equalizer=f=12000:t=q:w=0.5:g=2`;
-      }
-      
-      return filter;
-    } catch (error) {
-      console.error('构建滤镜失败:', error);
-      // 返回最基本的卡拉OK滤镜作为后备
-      return 'afftdn=nr=8:nf=-28,anlmdn=s=0.00004:p=0.003:r=0.018,alimiter=limit=0.98';
-    }
-  }
-
-  private getRNNoiseModelPath(): string | null {
-    if (this.rnnoiseModelPath && fs.existsSync(this.rnnoiseModelPath)) {
-      return this.rnnoiseModelPath;
-    }
-
-    const candidates = [
-      path.join(process.resourcesPath || '', 'models', 'rnnoise-std.rnnn'),
-      path.join(process.resourcesPath || '', 'app.asar.unpacked', 'resources', 'models', 'rnnoise-std.rnnn'),
-      path.join(process.cwd(), 'resources', 'models', 'rnnoise-std.rnnn'),
-      path.join(__dirname, '..', 'resources', 'models', 'rnnoise-std.rnnn')
-    ];
-
-    for (const candidate of candidates) {
-      if (candidate && fs.existsSync(candidate)) {
-        this.rnnoiseModelPath = candidate;
-        console.log('RNNoise model found:', candidate);
-        return candidate;
-      }
-    }
-
-    console.warn('RNNoise model not found; falling back to FFmpeg denoise filters.');
-    return null;
-  }
-
-  private escapeFilterPath(filePath: string): string {
-    return filePath.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "\\'");
-  }
-
-  /**
-   * 兼容FFmpeg 8.0的谱减法滤镜 - 简化版
-   */
-  private buildCompatibleSpectralFilter(options: VocalRemovalOptions): string {
-    const quality = options.quality || 'high';
-    
-    if (quality === 'ultra') {
-      // 超高质量：简单滤镜链
-      return [
-        'pan=mono|c0=0.5*c0-0.5*c1',  // 立体声相位消除
-        'highpass=f=80:poles=2',
-        'lowpass=f=18000:poles=2',
-        'equalizer=f=250:t=q:w=1.5:g=3',  // 增强低频
-        'equalizer=f=1000:t=q:w=2:g=-6',  // 削减人声主频
-        'equalizer=f=3000:t=q:w=2:g=-8',  // 削减人声高频
-        'equalizer=f=8000:t=q:w=1.5:g=2',  // 增强高频细节
-        'acompressor=threshold=0.15:ratio=6:attack=5:release=50:makeup=2',  // 动态压缩
-        'alimiter=limit=0.95:attack=5:release=50'  // 限幅保护
-      ].join(',');
-    } else if (quality === 'high') {
-      return [
-        'pan=mono|c0=0.5*c0-0.5*c1',
-        'highpass=f=100:poles=2',
-        'lowpass=f=16000:poles=2',
-        'equalizer=f=1000:t=q:w=2:g=-5',
-        'equalizer=f=3000:t=q:w=2:g=-6',
-        'acompressor=threshold=0.2:ratio=4:attack=8:release=60'
-      ].join(',');
-    } else {
-      return 'pan=mono|c0=0.5*c0-0.5*c1,highpass=f=120:poles=2';
-    }
-  }
-
-  /**
-   * 兼容的维纳滤波
-   */
-  private buildCompatibleWienerFilter(options: VocalRemovalOptions): string {
-    const quality = options.quality || 'high';
-    
-    if (quality === 'ultra') {
-      return [
-        'pan=mono|c0=0.5*c0+-0.5*c1',
-        'anlmdn=s=7:p=0.002:r=0.01:o=3:m=15',
-        'highpass=f=100:poles=2',
-        'lowpass=f=15000:poles=2',
-        'equalizer=f=150:t=q:w=200:g=-1',
-        'equalizer=f=3000:t=q:w=1500:g=-2'
-      ].join(',');
-    } else if (quality === 'high') {
-      return [
-        'pan=mono|c0=0.5*c0+-0.5*c1',
-        'anlmdn=s=5:p=0.005:r=0.02:o=2:m=10',
-        'highpass=f=100:poles=2'
-      ].join(',');
-    } else {
-      return 'pan=mono|c0=0.5*c0+-0.5*c1';
-    }
-  }
-
-  /**
-   * 兼容的盲源分离滤波
-   */
-  private buildCompatibleBSSFilter(options: VocalRemovalOptions): string {
-    const quality = options.quality || 'high';
-    
-    if (quality === 'ultra') {
-      return [
-        'highpass=f=80:poles=2',
-        'lowpass=f=16000:poles=2',
-        'pan=mono|c0=0.5*c0+-0.5*c1',
-        'aphaser=in_gain=0.6:out_gain=1:delay=1.0:decay=0.1:speed=0.8',
-        'acompressor=threshold=0.25:ratio=3.5:attack=8:release=60',
-        'equalizer=f=200:t=q:w=150:g=-2',
-        'equalizer=f=800:t=q:w=500:g=-3',
-        'equalizer=f=2500:t=q:w=1200:g=-4'
-      ].join(',');
-    } else if (quality === 'high') {
-      return [
-        'highpass=f=80:poles=2',
-        'lowpass=f=16000:poles=2',
-        'pan=mono|c0=0.5*c0+-0.5*c1',
-        'acompressor=threshold=0.3:ratio=3:attack=10:release=80'
-      ].join(',');
-    } else {
-      return 'pan=mono|c0=0.5*c0+-0.5*c1';
-    }
-  }
-
-  /**
-   * 兼容的HPSS滤波
-   */
-  private buildCompatibleHPSSFilter(options: VocalRemovalOptions): string {
-    const quality = options.quality || 'high';
-    
-    if (quality === 'ultra') {
-      return [
-        'pan=mono|c0=0.5*c0+-0.5*c1',
-        'aphaser=in_gain=0.7:out_gain=1:delay=1.5:decay=0.2:speed=0.6',
-        'acompressor=threshold=0.2:ratio=4:attack=5:release=50',
-        'equalizer=f=150:t=q:w=200:g=-1',
-        'equalizer=f=800:t=q:w=400:g=-2',
-        'equalizer=f=3000:t=q:w=1500:g=-3'
-      ].join(',');
-    } else if (quality === 'high') {
-      return [
-        'pan=mono|c0=0.5*c0+-0.5*c1',
-        'acompressor=threshold=0.3:ratio=3:attack=10:release=80'
-      ].join(',');
-    } else {
-      return 'pan=mono|c0=0.5*c0+-0.5*c1';
-    }
-  }
-
-  /**
-   * 兼容的多级处理滤波 - 简化版
-   */
-  private buildCompatibleMultistageFilter(options: VocalRemovalOptions): string {
-    const quality = options.quality || 'high';
-    
-    if (quality === 'ultra') {
-      // 终极人声消除：多级处理 + 频谱雕刻（简化版）
-      return [
-        'pan=mono|c0=0.5*c0-0.5*c1',  // 立体声相位消除
-        // 第一级：频率范围控制
-        'highpass=f=50:poles=4',  // 超低频滤除
-        'lowpass=f=19000:poles=4',  // 超高频滤除
-        // 第二级：人声频段精确削减
-        'equalizer=f=150:t=q:w=1:g=5',  // 增强超低频
-        'equalizer=f=300:t=q:w=1.5:g=3',  // 增强低频
-        'equalizer=f=800:t=q:w=2:g=-4',  // 削减中低频人声
-        'equalizer=f=1200:t=q:w=3:g=-10',  // 大幅削减人声基频
-        'equalizer=f=2000:t=q:w=3:g=-12',  // 极大削减人声主频
-        'equalizer=f=3000:t=q:w=3:g=-11',  // 极大削减人声高频
-        'equalizer=f=4500:t=q:w=2.5:g=-6',  // 削减人声泛音
-        'equalizer=f=7000:t=q:w=2:g=-3',  // 轻削减高频泛音
-        'equalizer=f=11000:t=q:w=1.5:g=4',  // 增强高频细节
-        'equalizer=f=15000:t=q:w=1:g=2',  // 增强超高频
-        // 第三级：动态处理
-        'acompressor=threshold=0.08:ratio=10:attack=2:release=30:makeup=4',  // 极强压缩
-        'alimiter=limit=0.99:attack=2:release=30',  // 限幅
-        // 第四级：噪声抑制
-        'anlmdn=s=5:p=0.001:r=0.005:o=3:m=12',  // 降噪
-        // 第五级：最终增益
-        'volume=1.8'  // 大幅提升音量
-      ].join(',');
-    } else if (quality === 'high') {
-      return [
-        'pan=mono|c0=0.5*c0-0.5*c1',
-        'highpass=f=80:poles=2',
-        'lowpass=f=17000:poles=2',
-        'equalizer=f=1200:t=q:w=2.5:g=-7',
-        'equalizer=f=2500:t=q:w=2.5:g=-8',
-        'equalizer=f=4000:t=q:w=2:g=-4',
-        'acompressor=threshold=0.15:ratio=6:attack=4:release=40:makeup=2.5',
-        'volume=1.4'
-      ].join(',');
-    } else {
-      return [
-        'pan=mono|c0=0.5*c0-0.5*c1',
-        'highpass=f=100:poles=2',
-        'equalizer=f=1500:t=q:w=2:g=-5',
-        'acompressor=threshold=0.25:ratio=4:attack=8:release=60'
-      ].join(',');
-    }
-  }
-
-  /**
-   * 兼容的频谱门控滤波
-   */
-  private buildCompatibleSpectralGatingFilter(options: VocalRemovalOptions): string {
-    const quality = options.quality || 'high';
-    
-    if (quality === 'ultra') {
-      return [
-        'pan=mono|c0=0.5*c0+-0.5*c1',
-        'aphaser=in_gain=0.7:out_gain=1:delay=1.5:decay=0.2:speed=0.6',
-        'acompressor=threshold=0.3:ratio=3:attack=10:release=80',
-        'equalizer=f=200:t=q:w=150:g=-2',
-        'equalizer=f=800:t=q:w=400:g=-3'
-      ].join(',');
-    } else if (quality === 'high') {
-      return [
-        'pan=mono|c0=0.5*c0+-0.5*c1',
-        'acompressor=threshold=0.3:ratio=3:attack=10:release=80'
-      ].join(',');
-    } else {
-      return 'pan=mono|c0=0.5*c0+-0.5*c1';
-    }
-  }
-
-  /**
-   * 基础卡拉OK滤镜 - 简化版，避免复杂滤镜图问题
-   */
-  private buildKaraokeFilter(options: VocalRemovalOptions): string {
-    const quality = options.quality || 'high';
-
-    if (quality === 'ultra') {
-      // 温和削弱人声频段，保留原始立体声和大部分伴奏。
-      return [
-        'highpass=f=35:poles=2',
-        'lowpass=f=19000:poles=2',
-        'equalizer=f=220:t=q:w=1.2:g=2',
-        'equalizer=f=450:t=q:w=1.4:g=1.5',
-        'equalizer=f=900:t=q:w=2.2:g=-3',
-        'equalizer=f=1500:t=q:w=2.4:g=-5',
-        'equalizer=f=2600:t=q:w=2.6:g=-6',
-        'equalizer=f=3800:t=q:w=2.2:g=-4',
-        'equalizer=f=9000:t=q:w=1.4:g=1.5',
-        'acompressor=threshold=0.18:ratio=2.5:attack=8:release=80:makeup=1.5',
-        'alimiter=limit=0.98:attack=5:release=60'
-      ].join(',');
-    } else if (quality === 'high') {
-      return [
-        'highpass=f=35:poles=2',
-        'lowpass=f=18000:poles=2',
-        'equalizer=f=250:t=q:w=1.2:g=1.5',
-        'equalizer=f=1100:t=q:w=2:g=-3',
-        'equalizer=f=1800:t=q:w=2.2:g=-4.5',
-        'equalizer=f=3000:t=q:w=2.4:g=-5',
-        'equalizer=f=4200:t=q:w=2:g=-3',
-        'acompressor=threshold=0.2:ratio=2.2:attack=10:release=80:makeup=1',
-        'alimiter=limit=0.98'
-      ].join(',');
-    } else if (quality === 'medium') {
-      return [
-        'highpass=f=40:poles=2',
-        'lowpass=f=17000:poles=2',
-        'equalizer=f=1300:t=q:w=2:g=-2.5',
-        'equalizer=f=2600:t=q:w=2.2:g=-3.5',
-        'alimiter=limit=0.98'
-      ].join(',');
-    } else {
-      return 'highpass=f=45:poles=2,lowpass=f=16000:poles=2,equalizer=f=1800:t=q:w=2:g=-2.5,alimiter=limit=0.98';
-    }
-  }
-
-  private buildBandpassFilter(options: VocalRemovalOptions): string {
-    const quality = options.quality || 'high';
-    
-    if (quality === 'ultra' || quality === 'high') {
-      return [
-        'lowpass=f=85:poles=4',
-        'highpass=f=3000:poles=4'
-      ].join(',');
-    } else {
-      return 'bandreject=f=1000:w=2000';
-    }
-  }
-
-  private buildPhaseFilter(options: VocalRemovalOptions): string {
-    return [
-      'pan=mono|c0=0.5*c0+-0.5*c1',
-      'aphaser=in_gain=0.6:out_gain=1:delay=3.0:decay=0.4:speed=0.5'
-    ].join(',');
-  }
-
-  private buildHighpassFilter(options: VocalRemovalOptions): string {
-    const cutoffFreq = options.quality === 'high' ? 200 : 300;
-    return `highpass=f=${cutoffFreq}:poles=2`;
-  }
-
-  /**
-   * 执行FFmpeg命令 - 修复路径处理问题
-   */
-  private async executeFFmpeg(
-    inputPath: string, 
-    outputPath: string, 
-    filter: string, 
-    options: VocalRemovalOptions
-  ): Promise<boolean> {
-    return new Promise((resolve) => {
-      const quality = options.quality || 'high';
-      const ffmpegPath = this.systemInfo?.ffmpegPath || 'ffmpeg';
-      
-      // 设置音频编码参数
-      let audioCodec = [];
-      const outputExt = path.extname(outputPath).toLowerCase();
-      
-      switch (outputExt) {
-        case '.mp3':
-          audioCodec = ['-codec:a', 'libmp3lame', '-b:a', quality === 'ultra' ? '320k' : quality === 'high' ? '256k' : '192k'];
-          break;
-        case '.m4a':
-        case '.mp4':
-          audioCodec = ['-codec:a', 'aac', '-b:a', quality === 'ultra' ? '256k' : quality === 'high' ? '192k' : '128k'];
-          break;
-        case '.flac':
-          audioCodec = ['-codec:a', 'flac', '-compression_level', quality === 'ultra' ? '12' : '8'];
-          break;
-        case '.ogg':
-          audioCodec = ['-codec:a', 'libvorbis', '-b:a', quality === 'ultra' ? '320k' : quality === 'high' ? '256k' : '192k'];
-          break;
-        default:
-          // WAV或其他格式
-          audioCodec = ['-codec:a', 'pcm_s16le'];
-      }
-      
-      // 检测是否需要使用复杂滤镜
-      // 如果滤镜包含标签（如 [a], [b]），则使用 -filter_complex
-      const useComplexFilter = filter.includes('[') && filter.includes(']');
-      const filterParam = useComplexFilter ? '-filter_complex' : '-af';
-      
-      // 构建完整的FFmpeg参数
-      const ffmpegArgs = [
-        '-i', inputPath,
-        filterParam, filter,
-        ...audioCodec,
-        '-threads', '0',
-        '-y',
-        outputPath
-      ];
-      
-      console.log('执行FFmpeg命令:', ffmpegPath, ffmpegArgs.join(' '));
-      console.log('使用滤镜类型:', useComplexFilter ? '复杂滤镜 (-filter_complex)' : '简单滤镜 (-af)');
-      
-      this.currentProcess = spawn(ffmpegPath, ffmpegArgs, {
-        stdio: ['ignore', 'pipe', 'pipe']
-      });
-      
-      let duration = 0;
-      let progress = 0;
-      let errorOutput = '';
-      let hasOutput = false;
-      
-      // 监听标准输出
-      this.currentProcess.stdout?.on('data', (data: Buffer) => {
-        hasOutput = true;
-        const output = data.toString();
-        console.log('FFmpeg stdout:', output);
-      });
-      
-      // 解析FFmpeg错误输出以获取进度
-      this.currentProcess.stderr?.on('data', (data: Buffer) => {
-        const output = data.toString();
-        errorOutput += output;
-        hasOutput = true;
-        
-        console.log('FFmpeg stderr:', output);
-        
-        // 提取总时长
-        const durationMatch = output.match(/Duration: (\d{2}):(\d{2}):(\d{2}\.?\d*)/);
-        if (durationMatch) {
-          duration = parseFloat(durationMatch[1]) * 3600 + 
-                    parseFloat(durationMatch[2]) * 60 + 
-                    parseFloat(durationMatch[3]);
-          console.log('检测到音频时长:', duration, '秒');
-        }
-        
-        // 提取当前进度
-        const timeMatch = output.match(/time=(\d{2}):(\d{2}):(\d{2}\.?\d*)/);
-        if (timeMatch && duration > 0) {
-          const currentTime = parseFloat(timeMatch[1]) * 3600 + 
-                             parseFloat(timeMatch[2]) * 60 + 
-                             parseFloat(timeMatch[3]);
-          progress = Math.min((currentTime / duration) * 100, 99);
-          this.sendProgressUpdate('processing', progress, `处理中... ${Math.round(progress)}%`);
-        }
-        
-        // 检查特定错误
-        if (output.toLowerCase().includes('no such file')) {
-          console.error('FFmpeg错误: 文件不存在');
-        } else if (output.toLowerCase().includes('permission denied')) {
-          console.error('FFmpeg错误: 权限被拒绝');
-        } else if (output.toLowerCase().includes('invalid data found')) {
-          console.error('FFmpeg错误: 无效的音频数据');
-        } else if (output.includes('Option not found')) {
-          console.error('FFmpeg错误: 滤镜选项不存在');
-        }
-      });
-      
-      this.currentProcess.on('error', (error: Error) => {
-        console.error('FFmpeg进程错误:', error);
-        if (error.message.includes('ENOENT')) {
-          console.error('FFmpeg可执行文件未找到，路径:', ffmpegPath);
-        }
-        this.currentProcess = null;
-        resolve(false);
-      });
-      
-      this.currentProcess.on('close', (code: number | null) => {
-        console.log('FFmpeg进程结束，退出码:', code);
-        console.log('是否有输出:', hasOutput);
-        
-        if (errorOutput) {
-          console.log('完整错误输出:', errorOutput);
-        }
-        
-        this.currentProcess = null;
-        
-        if (code === 0) {
-          console.log('FFmpeg处理成功完成');
-          resolve(true);
-        } else if (code === 255 || code === null) {
-          // 被取消或被杀死
-          console.log('FFmpeg处理被取消或中断');
-          resolve(false);
-        } else {
-          console.error('FFmpeg异常退出，退出码:', code);
-          if (errorOutput.includes('Option not found')) {
-            console.error('滤镜选项不兼容，建议使用基础算法');
-          }
-          resolve(false);
-        }
-      });
-
-      // 设置超时处理
-      const timeout = setTimeout(() => {
-        if (this.currentProcess && !this.currentProcess.killed) {
-          console.log('FFmpeg处理超时，强制终止');
-          this.currentProcess.kill('SIGTERM');
-          setTimeout(() => {
-            if (this.currentProcess && !this.currentProcess.killed) {
-              this.currentProcess.kill('SIGKILL');
-            }
-          }, 5000);
-          resolve(false);
-        }
-      }, 10 * 60 * 1000); // 10分钟超时
-
-      // 进程结束时清除超时
-      this.currentProcess.on('close', () => {
-        clearTimeout(timeout);
-      });
-    });
-  }
-
-  /**
-   * 文件大小格式化
-   */
-  private formatFileSize(bytes: number): string {
-    const sizes = ['B', 'KB', 'MB', 'GB'];
-    if (bytes === 0) return '0 B';
-    const i = Math.floor(Math.log(bytes) / Math.log(1024));
-    return Math.round(bytes / Math.pow(1024, i) * 100) / 100 + ' ' + sizes[i];
-  }
-
-  /**
-   * 获取可用的算法信息 - 更新为优化版本
-   */
-  private getAvailableAlgorithms() {
-    const algorithms = {
-      multistage: {
-        name: '多级处理 (推荐★★★★★)',
-        description: '终极人声消除算法：5级处理流程，精确频谱雕刻，效果最强',
-        complexity: 'high',
-        quality: 'ultra',
-        speed: 'slow',
-        recommended: true,
-        compatible: true,
-        effectLevel: 5
-      },
-      karaoke: {
-        name: '卡拉OK模式 (推荐★★★★)',
-        description: '优化的立体声处理，精确频率削减，效果优秀且稳定',
-        complexity: 'medium',
-        quality: 'high',
-        speed: 'fast',
-        recommended: true,
-        compatible: true,
-        effectLevel: 4
-      },
-      spectral: {
-        name: '谱减法 (推荐★★★★)',
-        description: '立体声分离配合动态压缩，保留音乐细节的同时有效消除人声',
-        complexity: 'medium',
-        quality: 'high',
-        speed: 'medium',
-        recommended: true,
-        compatible: true,
-        effectLevel: 4
-      },
-      bss: {
-        name: '盲源分离 (★★★)',
-        description: '多级频率处理和压缩，适合复杂音乐',
-        complexity: 'high',
-        quality: 'high',
-        speed: 'slow',
-        recommended: false,
-        compatible: true,
-        effectLevel: 3
-      },
-      hpss: {
-        name: 'HPSS分离 (★★★)',
-        description: '和声-打击乐分离的替代实现，效果稳定',
-        complexity: 'medium',
-        quality: 'high',
-        speed: 'medium',
-        recommended: false,
-        compatible: true,
-        effectLevel: 3
-      },
-      wiener: {
-        name: '维纳滤波 (★★)',
-        description: '使用噪声降低和声道处理，智能消除人声',
-        complexity: 'medium',
-        quality: 'medium',
-        speed: 'medium',
-        recommended: false,
-        compatible: true,
-        effectLevel: 2
-      },
-      spectral_gating: {
-        name: '频谱门控 (★★)',
-        description: '动态声道处理，自适应人声消除',
-        complexity: 'medium',
-        quality: 'medium',
-        speed: 'medium',
-        recommended: false,
-        compatible: true,
-        effectLevel: 2
-      },
-      phase: {
-        name: '相位处理 (★)',
-        description: '基于相位差的人声消除',
-        complexity: 'low',
-        quality: 'low',
-        speed: 'fast',
-        recommended: false,
-        compatible: true,
-        effectLevel: 1
-      },
-      bandpass: {
-        name: '带通滤波 (★)',
-        description: '通过频带控制消除人声频率范围',
-        complexity: 'low',
-        quality: 'low',
-        speed: 'fast',
-        recommended: false,
-        compatible: true,
-        effectLevel: 1
-      },
-      highpass: {
-        name: '高通滤波',
-        description: '简单的高频通过滤波，效果有限',
-        complexity: 'low',
-        quality: 'low',
-        speed: 'very_fast',
-        recommended: false,
-        compatible: true,
-        effectLevel: 1
-      }
-    };
-
-    return {
-      algorithms,
-      systemReady: this.systemInfo?.ffmpegAvailable || false,
-      ffmpegVersion: this.systemInfo?.version,
-      note: '所有算法已优化，推荐使用"多级处理"或"卡拉OK模式"获得最佳效果',
-      tips: [
-        '选择"超高质量"可获得最佳人声消除效果',
-        '处理时间较长的算法通常效果更好',
-        '建议先用小文件测试不同算法的效果',
-        '启用"保留低音"和"保留高频"可以保护音乐细节'
-      ]
-    };
-  }
-
-  /**
-   * 批量处理文件
-   */
   private async processBatch(
-    files: string[], 
-    outputDir: string, 
+    files: string[],
+    outputDir: string,
     options: Partial<VocalRemovalOptions>
   ): Promise<{ total: number; success: number; failed: number; results: ProcessingResult[] }> {
     const results: ProcessingResult[] = [];
-    let successCount = 0;
-    let failedCount = 0;
-    
-    // 验证输出目录
-    try {
-      await mkdir(outputDir, { recursive: true });
-    } catch (error) {
-      console.error('创建输出目录失败:', error);
-      return {
-        total: files.length,
-        success: 0,
-        failed: files.length,
-        results: files.map(file => ({
-          success: false,
-          error: '无法创建输出目录'
-        }))
-      };
-    }
-    
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      const fileName = path.basename(file, path.extname(file));
-      const outputExt = '.wav';
-      const outputPath = path.join(outputDir, `${fileName}_no_vocal${outputExt}`);
-      
-      // 发送批量处理进度
-      this.sendProgressUpdate('batch', (i / files.length) * 100, `处理文件 ${i + 1}/${files.length}: ${fileName}`);
-      
+    let success = 0;
+    let failed = 0;
+
+    fs.mkdirSync(outputDir, { recursive: true });
+
+    for (let index = 0; index < files.length; index++) {
+      const file = files[index];
+      const baseName = path.basename(file, path.extname(file));
+      this.sendProgressUpdate('batch', (index / files.length) * 100, `正在处理 ${index + 1}/${files.length}: ${baseName}`);
+
       const result = await this.processVocalRemoval({
+        ...options,
         inputPath: file,
-        outputPath,
-        ...options
-      } as VocalRemovalOptions);
-      
+        outputPath: outputDir,
+        outputFileName: `${baseName}_伴奏.mp3`,
+        algorithm: 'demucs',
+        quality: options.quality || 'high'
+      });
+
       results.push(result);
       if (result.success) {
-        successCount++;
+        success += 1;
       } else {
-        failedCount++;
-      }
-      
-      // 如果连续失败太多，提前停止
-      if (failedCount > successCount && i > 2) {
-        console.log('批量处理失败率过高，提前停止');
-        break;
+        failed += 1;
       }
     }
-    
-    return {
-      total: files.length,
-      success: successCount,
-      failed: failedCount,
-      results
-    };
+
+    return { total: files.length, success, failed, results };
   }
 
-  /**
-   * 取消处理
-   */
   private async cancelProcessing(): Promise<{ success: boolean; message?: string }> {
-    try {
-      if (this.currentProcess && !this.currentProcess.killed) {
-        this.currentProcess.kill('SIGTERM');
-        
-        // 如果5秒后还没结束，强制杀死
-        setTimeout(() => {
-          if (this.currentProcess && !this.currentProcess.killed) {
-            this.currentProcess.kill('SIGKILL');
-          }
-        }, 5000);
-        
-        this.currentProcess = null;
-        this.isProcessing = false;
-        this.sendProgressUpdate('cancelled', 0, '处理已取消');
-        return { success: true, message: '处理已成功取消' };
-      }
+    if (!this.currentProcess || this.currentProcess.killed) {
       return { success: false, message: '没有正在进行的处理任务' };
-    } catch (error) {
-      console.error('取消处理失败:', error);
-      return { success: false, message: '取消处理时发生错误' };
     }
+
+    this.killCurrentProcess();
+    this.isProcessing = false;
+    this.sendProgressUpdate('cancelled', 0, '处理已取消');
+    return { success: true, message: '处理已取消' };
   }
 
-  /**
-   * 发送进度更新到渲染进程
-   */
-  private sendProgressUpdate(status: string, progress: number, message: string) {
-    if (this.mainWindow && !this.mainWindow.isDestroyed()) {
-      this.mainWindow.webContents.send('vocal-remover:progress', {
-        status,
-        progress,
-        message,
-        timestamp: new Date().toISOString()
-      });
-    }
-  }
-
-  /**
-   * 清理资源
-   */
-  public cleanup() {
+  private killCurrentProcess() {
     if (this.currentProcess && !this.currentProcess.killed) {
       this.currentProcess.kill('SIGTERM');
       setTimeout(() => {
@@ -1517,154 +801,49 @@ class VocalRemoverManager {
           this.currentProcess.kill('SIGKILL');
         }
       }, 3000);
-      this.currentProcess = null;
     }
-    this.isProcessing = false;
+    this.currentProcess = null;
   }
 
-  /**
-   * 获取详细的系统诊断信息
-   */
-  public async getDiagnostics(): Promise<{
-    ffmpeg: { available: boolean; path?: string; version?: string; error?: string };
-    permissions: { canRead: boolean; canWrite: boolean; details: string };
-    paths: { input: string; output: string; temp: string };
-    system: { platform: string; arch: string; nodeVersion: string };
-    filters: { available: string[]; unavailable: string[] };
-  }> {
-    const ffmpegInfo = await this.detectFFmpeg();
-    
-    // 测试权限
-    const permissionsTest = await this.testPermissions();
-    
-    // 获取路径信息
-    const defaultPaths = this.getDefaultPaths();
-    
-    // 测试滤镜可用性
-    const filterTests = await this.testFiltersAvailability();
-    
-    return {
-      ffmpeg: {
-        available: ffmpegInfo.available,
-        path: ffmpegInfo.path,
-        version: ffmpegInfo.version,
-        error: !ffmpegInfo.available ? '未找到FFmpeg或无法执行' : undefined
-      },
-      permissions: permissionsTest,
-      paths: defaultPaths,
-      system: {
-        platform: os.platform(),
-        arch: os.arch(),
-        nodeVersion: process.version
-      },
-      filters: filterTests
-    };
-  }
-
-  /**
-   * 测试滤镜可用性
-   */
-  private async testFiltersAvailability(): Promise<{ available: string[]; unavailable: string[] }> {
-    const filtersToTest = ['pan', 'highpass', 'lowpass', 'acompressor', 'equalizer', 'aphaser', 'anlmdn'];
-    const available: string[] = [];
-    const unavailable: string[] = [];
-    
-    for (const filter of filtersToTest) {
-      const isAvailable = await this.testFilterAvailability(filter);
-      if (isAvailable) {
-        available.push(filter);
-      } else {
-        unavailable.push(filter);
-      }
+  private sendProgressUpdate(status: string, progress: number, message: string) {
+    if (!this.mainWindow || this.mainWindow.isDestroyed()) {
+      return;
     }
-    
-    return { available, unavailable };
+
+    this.mainWindow.webContents.send('vocal-remover:progress', {
+      status,
+      progress: Math.max(0, Math.min(100, progress)),
+      message,
+      timestamp: new Date().toISOString()
+    });
   }
 
-  /**
-   * 测试系统权限
-   */
-  private async testPermissions(): Promise<{ canRead: boolean; canWrite: boolean; details: string }> {
-    try {
-      const tempDir = os.tmpdir();
-      const testFile = path.join(tempDir, `vocal_remover_test_${Date.now()}.tmp`);
-      
-      // 测试写入权限
-      let canWrite = false;
-      try {
-        await writeFile(testFile, 'test');
-        canWrite = true;
-        await unlink(testFile); // 清理测试文件
-      } catch (error) {
-        console.error('写入权限测试失败:', error);
-      }
-      
-      // 测试读取权限
-      let canRead = false;
-      try {
-        await readdir(tempDir);
-        canRead = true;
-      } catch (error) {
-        console.error('读取权限测试失败:', error);
-      }
-      
-      return {
-        canRead,
-        canWrite,
-        details: canRead && canWrite ? '权限正常' : 
-                canRead ? '只有读取权限，写入失败' : 
-                canWrite ? '只有写入权限，读取失败' : 
-                '读取和写入权限都不可用'
-      };
-    } catch (error) {
-      return {
-        canRead: false,
-        canWrite: false,
-        details: `权限测试失败: ${error}`
-      };
+  private summarizeProcessError(name: string, output: string): string {
+    const usefulLine = output
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .slice(-6)
+      .join(' | ');
+
+    return `${name} 执行失败${usefulLine ? `: ${usefulLine}` : ''}`;
+  }
+
+  private formatFileSize(bytes: number): string {
+    const units = ['B', 'KB', 'MB', 'GB'];
+    let size = bytes;
+    let unitIndex = 0;
+    while (size >= 1024 && unitIndex < units.length - 1) {
+      size /= 1024;
+      unitIndex += 1;
     }
+    return `${size.toFixed(size >= 10 ? 1 : 2)} ${units[unitIndex]}`;
   }
 
-  /**
-   * 提供FFmpeg命令预览功能
-   */
-  public previewFFmpegCommand(options: VocalRemovalOptions): string {
-    const filter = this.buildCompatibleAudioFilter(options);
-    const ffmpegPath = this.systemInfo?.ffmpegPath || 'ffmpeg';
-    
-    return `${ffmpegPath} -i "${options.inputPath}" -af "${filter}" -codec:a pcm_s16le -threads 0 -y "${options.outputPath}"`;
-  }
-
-  /**
-   * 简化的错误恢复处理
-   */
-  private async processVocalRemovalWithFallback(options: VocalRemovalOptions): Promise<ProcessingResult> {
-    // 首先尝试用户选择的算法
-    let result = await this.processVocalRemoval(options);
-    
-    if (!result.success && result.error?.includes('Option not found')) {
-      console.log('原算法失败，尝试使用基础卡拉OK模式');
-      
-      // 回退到最基础的卡拉OK模式
-      const fallbackOptions = {
-        ...options,
-        algorithm: 'karaoke' as const,
-        quality: 'low' as const
-      };
-      
-      result = await this.processVocalRemoval(fallbackOptions);
-      
-      if (result.success) {
-        result.details = (result.details || '') + ' (使用了兼容模式)';
-      }
-    }
-    
-    return result;
+  private uniquePaths(paths: string[]): string[] {
+    return Array.from(new Set(paths.filter(Boolean)));
   }
 }
 
-// 创建单例实例并导出
 export const vocalRemoverManager = new VocalRemoverManager();
-
-// 导出管理器类以便在其他地方使用
 export default VocalRemoverManager;

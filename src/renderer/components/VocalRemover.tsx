@@ -41,7 +41,7 @@ export const VocalRemover: React.FC = () => {
           }
         }
       } catch (error) {
-        console.warn('Failed to initialize vocal remover output directory:', error);
+        console.warn('Failed to initialize accompaniment output directory:', error);
       }
     };
 
@@ -49,15 +49,18 @@ export const VocalRemover: React.FC = () => {
 
     if (window.electronAPI?.vocalRemover?.onProgress) {
       const unsubscribe = window.electronAPI.vocalRemover.onProgress((data: any) => {
-        if (data.status === 'processing') {
-          setProgress(data.progress);
-          setStatus(data.message || '处理中...');
+        if (data.status === 'processing' || data.status === 'batch') {
+          setProgress(data.progress || 0);
+          setStatus(data.message || '正在提取伴奏...');
         } else if (data.status === 'completed') {
           setProgress(100);
-          setStatus('处理完成');
+          setStatus('伴奏提取完成');
           setIsProcessing(false);
         } else if (data.status === 'cancelled') {
           setStatus('处理已取消');
+          setIsProcessing(false);
+        } else if (data.status === 'failed') {
+          setStatus(data.message || '伴奏提取失败');
           setIsProcessing(false);
         }
       });
@@ -115,7 +118,7 @@ export const VocalRemover: React.FC = () => {
         return;
       }
 
-      const dirPath = prompt('请输入输出目录路径:', outputDirectory);
+      const dirPath = prompt('请输入输出目录路径', outputDirectory);
       if (dirPath) setOutputDirectory(dirPath);
     } catch (error) {
       console.error('Select output directory failed:', error);
@@ -137,7 +140,7 @@ export const VocalRemover: React.FC = () => {
 
   const handleStartProcessing = async () => {
     if (selectedFiles.length === 0) {
-      alert('请先选择要处理的音频文件');
+      alert('请先选择要提取伴奏的音频文件');
       return;
     }
 
@@ -148,7 +151,7 @@ export const VocalRemover: React.FC = () => {
 
     setIsProcessing(true);
     setProgress(0);
-    setStatus('开始处理...');
+    setStatus('开始提取伴奏...');
     setProcessingResults([]);
 
     try {
@@ -156,16 +159,14 @@ export const VocalRemover: React.FC = () => {
       const inputPath = file.path || file.name;
       const baseName = (file.name || 'output').split(/[\\/]/).pop() || 'output';
       const nameWithoutExt = baseName.replace(/\.[^/.]+$/, '');
-      const outputFileName = `${nameWithoutExt}_no_vocal.mp3`;
+      const outputFileName = `${nameWithoutExt}_伴奏.mp3`;
 
       const result = await window.electronAPI.vocalRemover.process({
         inputPath,
         outputPath: outputDirectory,
         outputFileName,
-        algorithm: 'karaoke',
-        quality: 'high',
-        preserveBass: true,
-        preserveHighs: true
+        algorithm: 'demucs',
+        quality: 'high'
       });
 
       if (result?.success) {
@@ -174,21 +175,21 @@ export const VocalRemover: React.FC = () => {
           outputPath: result.outputPath,
           duration: result.duration
         }]);
-        setStatus('处理完成');
+        setStatus('伴奏提取完成');
         setProgress(100);
-        alert(`处理成功:\n${result.outputPath}`);
+        alert(`伴奏提取成功:\n${result.outputPath}`);
       } else {
         setProcessingResults([{
           success: false,
-          error: result?.error || '处理失败'
+          error: result?.error || '伴奏提取失败'
         }]);
-        setStatus('处理失败: ' + (result?.error || '未知错误'));
-        alert('处理失败: ' + (result?.error || '未知错误') + '\n详情: ' + (result?.details || '无'));
+        setStatus('伴奏提取失败: ' + (result?.error || '未知错误'));
+        alert('伴奏提取失败: ' + (result?.error || '未知错误') + '\n详情: ' + (result?.details || '无'));
       }
     } catch (error) {
-      console.error('Vocal removal failed:', error);
-      setStatus('处理失败: ' + (error instanceof Error ? error.message : '未知错误'));
-      alert('处理失败: ' + (error instanceof Error ? error.message : '未知错误'));
+      console.error('Accompaniment extraction failed:', error);
+      setStatus('伴奏提取失败: ' + (error instanceof Error ? error.message : '未知错误'));
+      alert('伴奏提取失败: ' + (error instanceof Error ? error.message : '未知错误'));
     } finally {
       setIsProcessing(false);
     }
@@ -199,7 +200,7 @@ export const VocalRemover: React.FC = () => {
       await window.electronAPI.vocalRemover.cancel();
       setStatus('处理已取消');
     } catch (error) {
-      console.error('Cancel vocal removal failed:', error);
+      console.error('Cancel accompaniment extraction failed:', error);
     } finally {
       setIsProcessing(false);
     }
@@ -213,10 +214,10 @@ export const VocalRemover: React.FC = () => {
             <div>
               <h2 className="text-xl font-semibold text-gray-900 flex items-center">
                 <VolumeHighIcon className="w-6 h-6 text-purple-600 mr-3" />
-                人声消除
+                提取伴奏
               </h2>
               <p className="text-sm text-gray-600 mt-1">
-                使用固定的人声削弱方式，尽量保留伴奏和音乐细节。
+                将整首歌曲分离为无人声伴奏，输出为可直接播放的 MP3 文件。
               </p>
             </div>
           </div>
@@ -297,7 +298,7 @@ export const VocalRemover: React.FC = () => {
                 ) : (
                   <ConvertIcon className="w-5 h-5" />
                 )}
-                <span>{isProcessing ? '处理中...' : '开始处理'}</span>
+                <span>{isProcessing ? '提取中...' : '开始提取伴奏'}</span>
               </button>
 
               {isProcessing && (

@@ -1,53 +1,46 @@
 #!/usr/bin/env node
 
 const { execSync } = require('child_process');
-const path = require('path');
 const fs = require('fs');
-
-function run(command) {
-  try {
-    execSync(command, { stdio: 'inherit' });
-    return true;
-  } catch (error) {
-    console.warn(`Command failed: ${command}`);
-    return false;
-  }
-}
+const path = require('path');
 
 exports.default = async function afterPack(context) {
   const { electronPlatformName, appOutDir } = context;
-  console.log(`afterPack started for ${electronPlatformName}`);
 
-  if (electronPlatformName === 'darwin') {
-    const appName = context.packager.appInfo.productFilename;
-    const appPath = path.join(appOutDir, `${appName}.app`);
-    const ffmpegPath = path.join(appPath, 'Contents', 'Resources', 'ffmpeg', 'ffmpeg');
+  try {
+    if (electronPlatformName === 'darwin') {
+      const appName = context.packager.appInfo.productFilename;
+      const appPath = path.join(appOutDir, `${appName}.app`);
+      const executablePaths = [
+        path.join(appPath, 'Contents', 'Resources', 'ffmpeg', 'ffmpeg'),
+        path.join(appPath, 'Contents', 'Resources', 'demucs', 'mac', 'demucs')
+      ];
 
-    if (fs.existsSync(ffmpegPath)) {
-      run(`chmod +x "${ffmpegPath}"`);
-    } else {
-      console.warn(`FFmpeg not found: ${ffmpegPath}`);
+      for (const executablePath of executablePaths) {
+        if (fs.existsSync(executablePath)) {
+          execSync(`chmod +x "${executablePath}"`, { stdio: 'inherit' });
+          console.log('Executable permission set:', executablePath);
+        } else {
+          console.warn('Executable not found:', executablePath);
+        }
+      }
     }
 
-    if (fs.existsSync(appPath)) {
-      run(`xattr -cr "${appPath}"`);
-      run(`xattr -dr com.apple.quarantine "${appPath}"`);
-      run(`chmod -R +x "${path.join(appPath, 'Contents', 'MacOS')}"`);
-      run(`find "${appPath}" -name "*.dylib" -exec chmod 755 {} \\;`);
-      run(`codesign --force --deep --sign - "${appPath}"`);
-    } else {
-      console.warn(`App bundle not found: ${appPath}`);
+    if (electronPlatformName === 'win32') {
+      const executablePaths = [
+        path.join(appOutDir, 'ffmpeg', 'ffmpeg.exe'),
+        path.join(appOutDir, 'demucs', 'win', 'demucs.exe')
+      ];
+
+      for (const executablePath of executablePaths) {
+        if (fs.existsSync(executablePath)) {
+          console.log('Executable found:', executablePath);
+        } else {
+          console.warn('Executable not found:', executablePath);
+        }
+      }
     }
+  } catch (error) {
+    console.error('afterPack failed:', error);
   }
-
-  if (electronPlatformName === 'win32') {
-    const ffmpegPath = path.join(appOutDir, 'ffmpeg', 'ffmpeg.exe');
-    if (fs.existsSync(ffmpegPath)) {
-      console.log(`Windows FFmpeg found: ${ffmpegPath}`);
-    } else {
-      console.warn(`Windows FFmpeg not found: ${ffmpegPath}`);
-    }
-  }
-
-  console.log('afterPack completed.');
 };
