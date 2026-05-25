@@ -96,13 +96,6 @@
         ]
       },
       {
-        "from": "resources/demucs",
-        "to": "demucs",
-        "filter": [
-          "**/*"
-        ]
-      },
-      {
         "from": "resources/kugou_key.xz",
         "to": "kugou_key.xz"
       }
@@ -154,6 +147,22 @@
         {
           "from": "scripts/prelaunch-fix.sh",
           "to": "prelaunch-fix.sh"
+        }
+      ],
+      "extraResources": [
+        {
+          "from": "resources/demucs/mac",
+          "to": "demucs/mac",
+          "filter": [
+            "**/*"
+          ]
+        },
+        {
+          "from": "resources/demucs/models",
+          "to": "demucs/models",
+          "filter": [
+            "**/*"
+          ]
         }
       ],
       "extendInfo": {
@@ -243,8 +252,15 @@
           ]
         },
         {
-          "from": "resources/demucs",
-          "to": "demucs",
+          "from": "resources/demucs/win",
+          "to": "demucs/win",
+          "filter": [
+            "**/*"
+          ]
+        },
+        {
+          "from": "resources/demucs/models",
+          "to": "demucs/models",
           "filter": [
             "**/*"
           ]
