@@ -111,8 +111,6 @@
       "dist/**/*",
       "dist-electron/**/*",
       "public/**/*",
-      "resources/ffmpeg/**/*",
-      "resources/demucs/**/*",
       "!**/*.md",
       "!**/README*",
       "!**/CHANGELOG*",
