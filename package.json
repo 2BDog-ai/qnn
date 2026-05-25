@@ -96,6 +96,13 @@
         ]
       },
       {
+        "from": "resources/models",
+        "to": "models",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
         "from": "resources/kugou_key.xz",
         "to": "kugou_key.xz"
       }
@@ -105,6 +112,7 @@
       "dist-electron/**/*",
       "public/**/*",
       "resources/ffmpeg/**/*",
+      "resources/models/**/*",
       "!**/*.md",
       "!**/README*",
       "!**/CHANGELOG*",
@@ -139,11 +147,11 @@
       "extraFiles": [
         {
           "from": "scripts/macos-fix.sh",
-          "to": "macOS一键修复.command"
+          "to": "macos-fix.sh"
         },
         {
           "from": "scripts/install.sh",
-          "to": "macOS安装并修复.command"
+          "to": "install.sh"
         },
         {
           "from": "scripts/prelaunch-fix.sh",
@@ -194,14 +202,14 @@
           "y": 320,
           "type": "file",
           "path": "scripts/macos-fix.sh",
-          "name": "macOS一键修复.command"
+          "name": "macos-fix.sh"
         },
         {
           "x": 410,
           "y": 320,
           "type": "file",
           "path": "scripts/install.sh",
-          "name": "macOS安装并修复.command"
+          "name": "install.sh"
         }
       ],
       "window": {
@@ -235,12 +243,20 @@
           "filter": [
             "**/*"
           ]
+        },
+        {
+          "from": "resources/models",
+          "to": "models",
+          "filter": [
+            "**/*"
+          ]
         }
       ],
       "artifactName": "${productName}-${version}-${arch}.${ext}",
       "asarUnpack": [
         "**/node_modules/better-sqlite3/**/*",
-        "**/ffmpeg/**"
+        "**/ffmpeg/**",
+        "**/models/**"
       ],
       "requestedExecutionLevel": "asInvoker"
     },

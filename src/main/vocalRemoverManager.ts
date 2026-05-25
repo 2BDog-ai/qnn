@@ -50,6 +50,7 @@ class VocalRemoverManager {
   private currentProcess: any = null;
   private mainWindow: BrowserWindow | null = null;
   private systemInfo: SystemInfo | null = null;
+  private rnnoiseModelPath: string | null = null;
 
   constructor() {
     this.setupIpcHandlers();
@@ -738,15 +739,26 @@ class VocalRemoverManager {
    */
   private buildCompatibleAudioFilter(options: VocalRemovalOptions): string {
     try {
-      // Single stable mode: reduce centered vocals and mix bass/high detail
-      // from the original signal back in so the accompaniment stays audible.
+      const rnnoiseModel = this.getRNNoiseModelPath();
+      if (rnnoiseModel) {
+        const modelPath = this.escapeFilterPath(rnnoiseModel);
+        return [
+          `arnndn=m='${modelPath}':mix=-1`,
+          'afftdn=nr=8:nf=-28:tn=1',
+          'anlmdn=s=0.00004:p=0.003:r=0.018',
+          'acompressor=threshold=0.18:ratio=2.2:attack=8:release=80:makeup=1.4',
+          'alimiter=limit=0.98'
+        ].join(',');
+      }
+
       return [
-        '[0:a]aformat=channel_layouts=stereo,asplit=3[orig][sideSrc][highSrc]',
-        '[sideSrc]pan=stereo|c0=0.8*c0-0.8*c1|c1=0.8*c1-0.8*c0,volume=1.45[side]',
-        '[orig]lowpass=f=180,volume=0.85[low]',
-        '[highSrc]highpass=f=6500,volume=0.35[high]',
-        '[side][low][high]amix=inputs=3:duration=first:dropout_transition=0,alimiter=limit=0.98'
-      ].join(';');
+        'afftdn=nr=10:nf=-30:tn=1',
+        'anlmdn=s=0.00005:p=0.003:r=0.018',
+        'equalizer=f=1000:t=q:w=2:g=-1.5',
+        'equalizer=f=2500:t=q:w=2:g=-2.5',
+        'acompressor=threshold=0.2:ratio=2:attack=10:release=80:makeup=1.2',
+        'alimiter=limit=0.98'
+      ].join(',');
 
       const algorithm = options.algorithm || 'karaoke';
       const quality = options.quality || 'high';
@@ -799,8 +811,36 @@ class VocalRemoverManager {
     } catch (error) {
       console.error('构建滤镜失败:', error);
       // 返回最基本的卡拉OK滤镜作为后备
-      return 'pan=mono|c0=0.5*c0+-0.5*c1';
+      return 'afftdn=nr=8:nf=-28,anlmdn=s=0.00004:p=0.003:r=0.018,alimiter=limit=0.98';
     }
+  }
+
+  private getRNNoiseModelPath(): string | null {
+    if (this.rnnoiseModelPath && fs.existsSync(this.rnnoiseModelPath)) {
+      return this.rnnoiseModelPath;
+    }
+
+    const candidates = [
+      path.join(process.resourcesPath || '', 'models', 'rnnoise-std.rnnn'),
+      path.join(process.resourcesPath || '', 'app.asar.unpacked', 'resources', 'models', 'rnnoise-std.rnnn'),
+      path.join(process.cwd(), 'resources', 'models', 'rnnoise-std.rnnn'),
+      path.join(__dirname, '..', 'resources', 'models', 'rnnoise-std.rnnn')
+    ];
+
+    for (const candidate of candidates) {
+      if (candidate && fs.existsSync(candidate)) {
+        this.rnnoiseModelPath = candidate;
+        console.log('RNNoise model found:', candidate);
+        return candidate;
+      }
+    }
+
+    console.warn('RNNoise model not found; falling back to FFmpeg denoise filters.');
+    return null;
+  }
+
+  private escapeFilterPath(filePath: string): string {
+    return filePath.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "\\'");
   }
 
   /**
