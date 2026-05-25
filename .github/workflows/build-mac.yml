@@ -41,6 +41,20 @@ jobs:
           cd release/mac-arm64
           ditto -c -k --sequesterRsrc --keepParent "WeddingMusicPlayer.app" "../Wedding Music Player-1.0.0-arm64.zip"
 
+      - name: Build macOS DMG
+        run: |
+          set -e
+          mkdir -p release/dmg-root
+          cp -R "release/mac-arm64/WeddingMusicPlayer.app" "release/dmg-root/"
+          ln -s /Applications "release/dmg-root/Applications"
+          hdiutil create \
+            -volname "Wedding Music Player" \
+            -srcfolder "release/dmg-root" \
+            -ov \
+            -format UDZO \
+            "release/Wedding Music Player-1.0.0-arm64.dmg"
+          rm -rf release/dmg-root
+
       - name: List release files
         run: ls -lah release
 
