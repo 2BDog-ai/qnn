@@ -110,6 +110,8 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
   const dragPointerRef = useRef<{ x: number; y: number } | null>(null);
   const autoScrollFrameRef = useRef<number | null>(null);
   const activeScrollTargetRef = useRef<HTMLElement | null>(null);
+  const listDragSourceIdRef = useRef<string | null>(null);
+  const listRawInsertIndexRef = useRef<number | null>(null);
   const gridDragSourceIndexRef = useRef<number | null>(null);
   const gridDragSourceIdRef = useRef<string | null>(null);
   const [gridDraggingId, setGridDraggingId] = useState<string | null>(null);
@@ -133,6 +135,42 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
     }
     const scrollingElement = document.scrollingElement;
     return scrollingElement instanceof HTMLElement ? scrollingElement : document.documentElement;
+  };
+
+  const setListDragTarget = (index: number | null, rawInsertIndex?: number | null) => {
+    if (rawInsertIndex !== undefined) {
+      listRawInsertIndexRef.current = rawInsertIndex;
+    }
+    setListDragTargetIndex((current) => (current === index ? current : index));
+  };
+
+  const getListInsertionIndex = (clientY: number) => {
+    const container = document.getElementById('music-scroll-container');
+    if (!container) return musicFiles.length;
+
+    const sourceId = listDragSourceIdRef.current;
+    const nodes = Array.from(
+      container.querySelectorAll<HTMLElement>('[data-list-sort-item="true"]')
+    );
+
+    const items = nodes
+      .map((node) => ({
+        id: node.dataset.listId || '',
+        index: Number(node.dataset.listIndex),
+        rect: node.getBoundingClientRect()
+      }))
+      .filter((item) => Number.isFinite(item.index) && item.id !== sourceId)
+      .sort((a, b) => a.index - b.index);
+
+    if (items.length === 0) return 0;
+
+    for (const item of items) {
+      if (clientY < item.rect.top + item.rect.height / 2) {
+        return item.index;
+      }
+    }
+
+    return musicFiles.length;
   };
 
   const runAutoScroll = () => {
@@ -172,6 +210,11 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
             scrollTarget.scrollTop = nextScrollTop;
           }
         }
+      }
+
+      if (listDragSourceIdRef.current) {
+        const rawInsertIndex = getListInsertionIndex(pointer.y);
+        setListDragTarget(rawInsertIndex, rawInsertIndex);
       }
     }
 
@@ -266,18 +309,37 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
   }, [musicFiles]);
 
   const handleDragEnd = (result: DropResult) => {
-    setListDragTargetIndex(null);
-    if (!result.destination) return;
-    if (result.destination.index === result.source.index) return;
+    const rawInsertIndex = listRawInsertIndexRef.current;
+    const destinationIndex = rawInsertIndex ?? result.destination?.index ?? null;
+
+    setListDragTarget(null, null);
+    listDragSourceIdRef.current = null;
+
+    if (destinationIndex === null) return;
 
     const reordered = Array.from(sortedMusicFiles);
     const [removed] = reordered.splice(result.source.index, 1);
-    reordered.splice(result.destination.index, 0, removed);
+    let insertIndex = destinationIndex;
+    if (rawInsertIndex !== null && insertIndex > result.source.index) {
+      insertIndex -= 1;
+    }
+    insertIndex = Math.max(0, Math.min(insertIndex, reordered.length));
+
+    if (insertIndex === result.source.index) return;
+
+    reordered.splice(insertIndex, 0, removed);
     if (onReorder) void onReorder(reordered.map(m => m.id));
   };
 
   const handleDragUpdate = (update: DragUpdate) => {
-    setListDragTargetIndex(update.destination?.index ?? null);
+    if (update.destination) {
+      setListDragTarget(update.destination.index);
+    } else if (dragPointerRef.current && listDragSourceIdRef.current) {
+      const rawInsertIndex = getListInsertionIndex(dragPointerRef.current.y);
+      setListDragTarget(rawInsertIndex, rawInsertIndex);
+    } else {
+      setListDragTarget(null);
+    }
   };
 
   const cleanupGridDrag = () => {
@@ -896,8 +958,12 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
           </div>
         </div>
       ) : (
-        <DragDropContext
-          autoScrollerOptions={{ disabled: true }}
+          <DragDropContext
+          autoScrollerOptions={{
+            startFromPercentage: 0.12,
+            maxScrollAtPercentage: 0.02,
+            maxPixelScroll: 24
+          }}
           onDragUpdate={handleDragUpdate}
           onDragEnd={(result) => {
             document.body.style.userSelect = '';
@@ -906,7 +972,9 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
           }}
           onDragStart={(start) => {
             document.body.style.userSelect = 'none';
-            setListDragTargetIndex(null);
+            listDragSourceIdRef.current = start.draggableId;
+            listRawInsertIndexRef.current = null;
+            setListDragTarget(null);
             startSortingAutoScroll(start.draggableId);
           }}
         >
@@ -925,6 +993,9 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
                       {(dragProvided, dragSnapshot) => (
                       <div
                         id={`music-item-${music.id}`}
+                        data-list-sort-item="true"
+                        data-list-id={music.id}
+                        data-list-index={index}
                         ref={dragProvided.innerRef}
                         {...dragProvided.draggableProps}
                         {...dragProvided.dragHandleProps}

@@ -18,6 +18,13 @@ import { DataManager } from './dataManager';
 import os from 'os';
 import crypto from 'crypto';
 
+try {
+  app.setPath('userData', path.join(app.getPath('appData'), 'wedding-music-player'));
+  app.setName('YIYU');
+} catch (error) {
+  console.warn('Failed to set legacy userData path:', error);
+}
+
 const readFile = promisify(fs.readFile);
 const writeFile = promisify(fs.writeFile);
 const unlink = promisify(fs.unlink);

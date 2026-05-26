@@ -1,10 +1,10 @@
 #!/bin/bash
 
-# Wedding Music Player - silent macOS launch repair.
+# YIYU - silent macOS launch repair.
 
 set -u
 
-APP_NAME="WeddingMusicPlayer.app"
+APP_NAME="YIYU.app"
 APP_PATH=""
 
 for base in "/Applications" "$HOME/Applications" "$(dirname "$0")/.."; do

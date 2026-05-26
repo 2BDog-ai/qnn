@@ -5,8 +5,8 @@ const path = require('path');
 const { execSync } = require('child_process');
 
 const releaseDir = path.join(__dirname, '../release');
-const appDisplayName = 'Wedding Music Player';
-const appBundleName = 'WeddingMusicPlayer.app';
+const appDisplayName = 'YIYU';
+const appBundleName = 'YIYU.app';
 
 function run(command) {
   try {
@@ -39,48 +39,38 @@ function copyExecutable(source, target) {
 
 function createMacReadme(dmgFile) {
   const baseName = path.basename(dmgFile, '.dmg');
-  const readmePath = path.join(releaseDir, `${baseName}-安装说明.txt`);
-  const content = `Wedding Music Player - macOS 安装说明
+  const readmePath = path.join(releaseDir, `${baseName}-install.txt`);
+  const content = `${appDisplayName} - macOS Install
 
-文件: ${dmgFile}
-生成时间: ${new Date().toLocaleString('zh-CN')}
+File: ${dmgFile}
+Generated: ${new Date().toLocaleString('zh-CN')}
 
-正常安装步骤:
-1. 双击打开 ${dmgFile}
-2. 把 ${appBundleName} 拖到 Applications / 应用程序
-3. 到“应用程序”里右键 ${appBundleName}，选择“打开”
+Install:
+1. Open the DMG.
+2. Drag ${appBundleName} to Applications.
+3. Right-click ${appBundleName} in Applications and choose Open.
 
-如果提示“已损坏，无法打开”:
-这通常是 macOS 对微信、浏览器下载文件添加的隔离限制，不代表软件真的损坏。
+Apple Silicon M1/M2/M3/M4: use mac-arm64.dmg.
+Intel Mac: use mac-x64.dmg.
 
-推荐修复方法:
-1. 打开 DMG
-2. 双击 “macOS一键修复.command”
-3. 如果系统询问权限，输入这台 Mac 的开机密码
-4. 修复完成后会自动打开软件
-
-手动修复命令:
+If macOS blocks the app, run:
 sudo xattr -cr /Applications/${appBundleName}
-
-如果双击脚本提示无法打开:
-打开“终端”，输入 chmod +x ，把 macOS一键修复.command 拖进去，按回车；
-然后再双击运行 macOS一键修复.command。
 `;
   writeFile(readmePath, content);
 }
 
 function createWinReadme(exeFile) {
   const baseName = path.basename(exeFile, '.exe');
-  const readmePath = path.join(releaseDir, `${baseName}-安装说明.txt`);
-  const content = `Wedding Music Player - Windows 安装说明
+  const readmePath = path.join(releaseDir, `${baseName}-install.txt`);
+  const content = `${appDisplayName} - Windows Install
 
-文件: ${exeFile}
-生成时间: ${new Date().toLocaleString('zh-CN')}
+File: ${exeFile}
+Generated: ${new Date().toLocaleString('zh-CN')}
 
-安装步骤:
-1. 双击运行 ${exeFile}
-2. 按安装向导完成安装
-3. 如出现 Windows Defender 提示，请选择允许运行
+Install:
+1. Double-click the installer.
+2. Follow the installer steps.
+3. If Windows Defender prompts, choose allow/run.
 `;
   writeFile(readmePath, content);
 }
@@ -111,14 +101,8 @@ async function main() {
   }
 
   if (dmgFiles.length > 0 || appFiles.length > 0) {
-    copyExecutable(
-      path.join(__dirname, 'macos-fix.sh'),
-      path.join(releaseDir, 'macOS一键修复.command')
-    );
-    copyExecutable(
-      path.join(__dirname, 'install.sh'),
-      path.join(releaseDir, 'macOS安装并修复.command')
-    );
+    copyExecutable(path.join(__dirname, 'macos-fix.sh'), path.join(releaseDir, 'YIYU Repair.command'));
+    copyExecutable(path.join(__dirname, 'install.sh'), path.join(releaseDir, 'YIYU Install.command'));
   }
 
   console.log(`Build postprocess completed for ${appDisplayName}.`);

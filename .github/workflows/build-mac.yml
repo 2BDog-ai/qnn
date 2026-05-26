@@ -55,9 +55,9 @@ jobs:
         id: app
         run: |
           set -e
-          APP_PATH="$(find release -maxdepth 3 -name 'WeddingMusicPlayer.app' -type d | head -n 1)"
+          APP_PATH="$(find release -maxdepth 3 -name 'YIYU.app' -type d | head -n 1)"
           if [ -z "$APP_PATH" ]; then
-            echo "Could not find WeddingMusicPlayer.app"
+            echo "Could not find YIYU.app"
             find release -maxdepth 4 -type d
             exit 1
           fi
@@ -70,7 +70,7 @@ jobs:
           set -e
           APP="${{ steps.app.outputs.app_path }}"
           xattr -cr "$APP" || true
-          chmod +x "$APP/Contents/MacOS/WeddingMusicPlayer"
+          chmod +x "$APP/Contents/MacOS/YIYU"
           chmod +x "$APP/Contents/Resources/ffmpeg/ffmpeg" || true
           chmod +x "$APP/Contents/Resources/ffmpeg/ffprobe" || true
           chmod +x "$APP/Contents/Resources/demucs/mac/demucs" || true
@@ -81,7 +81,7 @@ jobs:
       - name: Zip macOS app
         run: |
           cd "${{ steps.app.outputs.app_parent }}"
-          ditto -c -k --sequesterRsrc --keepParent "WeddingMusicPlayer.app" "../Wedding Music Player-1.0.0-${{ matrix.suffix }}.zip"
+          ditto -c -k --sequesterRsrc --keepParent "YIYU.app" "../YIYU-1.0.1-${{ matrix.suffix }}.zip"
 
       - name: Build macOS DMG
         run: |
@@ -94,7 +94,7 @@ jobs:
           cp scripts/macos-fix.sh "release/dmg-root/Repair.command"
           chmod +x "release/dmg-root/Install.command" "release/dmg-root/Repair.command"
           cat > "release/dmg-root/README.txt" <<'EOF'
-          Wedding Music Player macOS
+          YIYU macOS
 
           Choose the right DMG first:
           - Apple Silicon / M1 / M2 / M3 / M4: use mac-arm64.dmg
@@ -102,14 +102,14 @@ jobs:
 
           1. Double-click Install.command first.
           2. If macOS still says the app cannot be opened or is damaged, double-click Repair.command.
-          3. You can also drag WeddingMusicPlayer.app to Applications, then right-click it and choose Open.
+          3. You can also drag YIYU.app to Applications, then right-click it and choose Open.
           EOF
           hdiutil create \
-            -volname "Wedding Music Player" \
+            -volname "YIYU" \
             -srcfolder "release/dmg-root" \
             -ov \
             -format UDZO \
-            "release/Wedding Music Player-1.0.0-${{ matrix.suffix }}.dmg"
+            "release/YIYU-1.0.1-${{ matrix.suffix }}.dmg"
           rm -rf release/dmg-root
 
       - name: List release files

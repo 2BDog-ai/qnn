@@ -3,6 +3,7 @@
 set -u
 
 APP_NAMES=(
+  "YIYU.app"
   "WeddingMusicPlayer.app"
   "Wedding Music Player.app"
 )
@@ -90,7 +91,7 @@ repair_app() {
 }
 
 echo "=================================================="
-echo "Wedding Music Player - macOS Repair"
+echo "YIYU - macOS Repair"
 echo "=================================================="
 echo ""
 echo "Apple Silicon M1/M2/M3/M4: use mac-arm64.dmg"
@@ -110,8 +111,8 @@ if copied_app="$(copy_from_dmg_if_needed 2>/dev/null)"; then
 elif found_app="$(find_app 2>/dev/null)"; then
   APP_PATH="$found_app"
 else
-  warn "WeddingMusicPlayer.app was not found automatically."
-  echo "Drag WeddingMusicPlayer.app into this window, then press Enter:"
+  warn "YIYU.app was not found automatically."
+  echo "Drag YIYU.app into this window, then press Enter:"
   read -r dragged_path
   APP_PATH="$(normalize_dragged_path "$dragged_path")"
 fi

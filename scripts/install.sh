@@ -4,6 +4,7 @@ set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_NAMES=(
+  "YIYU.app"
   "WeddingMusicPlayer.app"
   "Wedding Music Player.app"
 )
@@ -33,7 +34,7 @@ find_source_app() {
 }
 
 echo "=================================================="
-echo "Wedding Music Player - macOS Install"
+echo "YIYU - macOS Install"
 echo "=================================================="
 echo ""
 echo "Apple Silicon M1/M2/M3/M4: use mac-arm64.dmg"
@@ -47,7 +48,7 @@ if [[ "$(uname)" != "Darwin" ]]; then
 fi
 
 if ! SOURCE_APP="$(find_source_app)"; then
-  fail "WeddingMusicPlayer.app was not found. Open the DMG first, then run this script."
+  fail "YIYU.app was not found. Open the DMG first, then run this script."
   pause_exit
   exit 1
 fi
@@ -69,6 +70,6 @@ fi
 
 ok "Install finished."
 info "Opening app..."
-open "$TARGET_APP" || warn "If it does not open, right-click WeddingMusicPlayer in Applications and choose Open."
+open "$TARGET_APP" || warn "If it does not open, right-click YIYU in Applications and choose Open."
 
 pause_exit

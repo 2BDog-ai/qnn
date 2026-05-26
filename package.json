@@ -1,6 +1,6 @@
 {
   "name": "wedding-music-player",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "专业婚礼音乐播放器 - 支持音频播放、编辑、录音等功能",
   "main": "dist-electron/index.js",
   "scripts": {
@@ -76,8 +76,8 @@
   },
   "build": {
     "appId": "com.yourcompany.weddingmusicplayer",
-    "productName": "Wedding Music Player",
-    "executableName": "WeddingMusicPlayer",
+    "productName": "YIYU",
+    "executableName": "YIYU",
     "asar": true,
     "compression": "maximum",
     "directories": {
@@ -187,10 +187,10 @@
           }
         ]
       },
-      "artifactName": "${productName}-${version}-${arch}.${ext}"
+      "artifactName": "${productName}-${version}-mac-${arch}.${ext}"
     },
     "dmg": {
-      "title": "Wedding Music Player",
+      "title": "YIYU",
       "icon": "public/app-icon.png",
       "contents": [
         {
@@ -242,7 +242,7 @@
       "extraFiles": [
         {
           "from": "build/windows-launcher.bat",
-          "to": "艺语音乐播放器启动器.bat"
+          "to": "YIYU Launcher.bat"
         },
         {
           "from": "resources/ffmpeg",
@@ -266,7 +266,7 @@
           ]
         }
       ],
-      "artifactName": "${productName}-${version}-${arch}.${ext}",
+      "artifactName": "${productName}-${version}-win-${arch}.${ext}",
       "asarUnpack": [
         "**/node_modules/better-sqlite3/**/*",
         "**/ffmpeg/**",
@@ -280,7 +280,7 @@
       "allowElevation": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "????",
+      "shortcutName": "YIYU",
       "runAfterFinish": false,
       "warningsAsErrors": false
     }
