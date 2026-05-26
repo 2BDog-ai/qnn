@@ -41,7 +41,9 @@ function findExecutable(dirPath, name) {
 function downloadAndExtract(toolName, arch, targetPath, tempRoot) {
   const archivePath = path.join(tempRoot, `${toolName}.zip`);
   const extractDir = path.join(tempRoot, toolName);
-  const url = `https://ffmpeg.martin-riedl.de/redirect/latest/macos/${arch}/release/${toolName}.zip`;
+  const url = arch === 'amd64'
+    ? `https://evermeet.cx/ffmpeg/getrelease/${toolName === 'ffmpeg' ? 'zip' : `${toolName}/zip`}`
+    : `https://ffmpeg.martin-riedl.de/redirect/latest/macos/${arch}/release/${toolName}.zip`;
 
   console.log(`Downloading macOS ${arch} ${toolName}: ${url}`);
   run('curl', ['-L', '--fail', url, '-o', archivePath]);
@@ -73,11 +75,21 @@ for (const windowsBinary of ['ffmpeg.exe', 'ffprobe.exe']) {
   }
 }
 
-if (exists(ffmpegPath) && exists(ffprobePath)) {
+const forceRefresh = process.env.GITHUB_ACTIONS === 'true';
+
+if (exists(ffmpegPath) && exists(ffprobePath) && !forceRefresh) {
   console.log('FFmpeg already bundled for macOS.');
   run(ffmpegPath, ['-version']);
   run(ffprobePath, ['-version']);
   process.exit(0);
+}
+
+if (forceRefresh) {
+  for (const binaryPath of [ffmpegPath, ffprobePath]) {
+    if (exists(binaryPath)) {
+      fs.rmSync(binaryPath, { force: true });
+    }
+  }
 }
 
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'wmp-ffmpeg-mac-'));

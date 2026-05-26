@@ -42,6 +42,9 @@ jobs:
       - name: Prepare macOS FFmpeg
         run: node scripts/ensure-ffmpeg-mac.js
 
+      - name: Prepare macOS Demucs
+        run: node scripts/ensure-demucs-mac.js
+
       - name: Build app
         run: npm run build
 
@@ -81,7 +84,7 @@ jobs:
       - name: Zip macOS app
         run: |
           cd "${{ steps.app.outputs.app_parent }}"
-          ditto -c -k --sequesterRsrc --keepParent "YIYU.app" "../YIYU-1.0.1-${{ matrix.suffix }}.zip"
+          ditto -c -k --sequesterRsrc --keepParent "YIYU.app" "../YIYU-1.0.2-${{ matrix.suffix }}.zip"
 
       - name: Build macOS DMG
         run: |
@@ -109,7 +112,7 @@ jobs:
             -srcfolder "release/dmg-root" \
             -ov \
             -format UDZO \
-            "release/YIYU-1.0.1-${{ matrix.suffix }}.dmg"
+            "release/YIYU-1.0.2-${{ matrix.suffix }}.dmg"
           rm -rf release/dmg-root
 
       - name: List release files

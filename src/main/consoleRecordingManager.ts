@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { spawn } from 'child_process';
 import { promisify } from 'util';
+import { resolveFFmpegTool } from './ffmpegResolver';
 
 const writeFile = promisify(fs.writeFile);
 const mkdir = promisify(fs.mkdir);
@@ -1120,50 +1121,7 @@ class ConsoleRecordingManager {
   }
 
   private getFFmpegPath(): string {
-    const filename = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
-
-    // 与 FFmpegManager 一致的候选路径顺序（优先内置，其次系统）
-    const resourceBase = app.isPackaged
-      ? process.resourcesPath
-      : path.resolve(__dirname, '../../resources');
-
-    const execDir = path.dirname(process.execPath);
-    
-    // Windows 开发环境：使用 process.cwd() 作为基准
-    const cwd = process.cwd();
-
-    const candidates: string[] = [
-      // 应用资源目录内置 ffmpeg（开发/打包通用）
-      path.join(resourceBase, 'ffmpeg', filename),
-      // Windows 开发环境：从当前工作目录查找
-      path.join(cwd, 'resources', 'ffmpeg', filename),
-      // 明确的 resources 目录（打包时）
-      (process.resourcesPath ? path.join(process.resourcesPath, 'ffmpeg', filename) : ''),
-      // 与可执行文件相对的位置（跨平台）
-      path.join(execDir, 'ffmpeg', filename),
-      path.join(execDir, '..', 'Resources', 'ffmpeg', filename),
-      // 系统常见路径与 PATH
-      '/opt/homebrew/bin/ffmpeg',
-      '/usr/local/bin/ffmpeg',
-      '/usr/bin/ffmpeg',
-      filename
-    ].filter(Boolean) as string[];
-
-    console.log('🔍 ConsoleRecording 查找 FFmpeg，候选路径:');
-    for (const candidate of candidates) {
-      try {
-        console.log(`  - 测试: ${candidate}`);
-        if (fs.existsSync(candidate)) {
-          console.log('🎯 ConsoleRecording 找到可用的 FFmpeg:', candidate);
-          return candidate;
-        }
-      } catch (error) {
-        console.log('⚠️ 测试路径失败:', candidate, error);
-      }
-    }
-
-    console.log('⚠️ ConsoleRecording 未找到 FFmpeg，使用默认路径:', filename);
-    return filename;
+    return resolveFFmpegTool('ffmpeg');
   }
 }
 

@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import { spawn } from 'child_process';
 import { promisify } from 'util';
 import { MusicDecryptor } from './musicDecryptor';
+import { resolveFFmpegTool } from './ffmpegResolver';
 
 const writeFile = promisify(fs.writeFile);
 const unlink = promisify(fs.unlink);
@@ -59,111 +60,11 @@ class FFmpegManager {
   }
 
   private getFFmpegPath(): string {
-    console.log('=== getFFmpegPath 开始执行 ===');
-    console.log('process.platform:', process.platform);
-    console.log('process.cwd():', process.cwd());
-    console.log('app.isPackaged:', app.isPackaged);
-    
-    // 临时修复：优先尝试使用绝对路径
-    const absolutePath = path.join(process.cwd(), 'resources', 'ffmpeg', 'ffmpeg.exe');
-    console.log('尝试绝对路径:', absolutePath);
-    try {
-      if (fs.existsSync(absolutePath)) {
-        console.log('✓ 使用绝对路径找到 FFmpeg:', absolutePath);
-        return absolutePath;
-      } else {
-        console.log('✗ 绝对路径文件不存在');
-      }
-    } catch (error) {
-      console.log('✗ 绝对路径检查失败:', error);
-    }
-    
-    // 优先从应用资源目录加载随应用打包的 ffmpeg
-    const filename = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
-    console.log('filename:', filename);
-    
-    // 开发模式：使用项目根目录的 resources 文件夹
-    // 生产模式：使用打包后的资源目录
-    const appPath = app.getAppPath();
-    const appDir = path.dirname(appPath);
-    const resourceBase = app.isPackaged
-      ? process.resourcesPath
-      : path.join(appPath, 'resources');
-    console.log('resourceBase:', resourceBase);
-
-    const execDir = path.dirname(process.execPath);
-    console.log('execDir:', execDir);
-    
-    const candidates = [
-      // 开发模式：项目根目录的 resources/ffmpeg
-      path.join(process.cwd(), 'resources', 'ffmpeg', filename),
-      path.join(appPath, 'resources', 'ffmpeg', filename),
-      path.join(appDir, 'resources', 'ffmpeg', filename),
-      // 常规资源目录
-      path.join(resourceBase, 'ffmpeg', filename),
-      // 明确的 resources 目录
-      (process.resourcesPath ? path.join(process.resourcesPath, 'ffmpeg', filename) : ''),
-      // Windows: 与可执行文件同级目录的 ffmpeg 子目录
-      path.join(execDir, 'ffmpeg', filename),
-      // macOS: 从可执行目录回溯到 Resources/ffmpeg
-      path.join(execDir, '..', 'Resources', 'ffmpeg', filename),
-    ].filter(Boolean) as string[];
-
-    console.log('candidates 数组长度:', candidates.length);
-    console.log('正在查找 FFmpeg，候选路径:');
-    for (const candidate of candidates) {
-      console.log(`  检查: ${candidate}`);
-      try {
-        if (fs.existsSync(candidate)) {
-          console.log(`  ✓ 找到 FFmpeg: ${candidate}`);
-          return candidate;
-        } else {
-          console.log(`  ✗ 文件不存在`);
-        }
-      } catch (error) {
-        console.log(`  ✗ 检查失败: ${error}`);
-      }
-    }
-
-    console.warn('未找到本地 FFmpeg，回退到系统 PATH');
-    // 回退到系统 PATH 中的命令
-    return filename;
+    return resolveFFmpegTool('ffmpeg');
   }
 
   private getFFprobePath(): string {
-    // 如果随包未提供 ffprobe，则回退到系统 PATH
-    const filename = process.platform === 'win32' ? 'ffprobe.exe' : 'ffprobe';
-    
-    // 开发模式：使用项目根目录的 resources 文件夹
-    // 生产模式：使用打包后的资源目录
-    const appPath = app.getAppPath();
-    const appDir = path.dirname(appPath);
-    const resourceBase = app.isPackaged
-      ? process.resourcesPath
-      : path.join(appPath, 'resources');
-
-    const execDir = path.dirname(process.execPath);
-    const candidates = [
-      // 开发模式：项目根目录的 resources/ffmpeg
-      path.join(process.cwd(), 'resources', 'ffmpeg', filename),
-      path.join(appPath, 'resources', 'ffmpeg', filename),
-      path.join(appDir, 'resources', 'ffmpeg', filename),
-      path.join(resourceBase, 'ffmpeg', filename),
-      (process.resourcesPath ? path.join(process.resourcesPath, 'ffmpeg', filename) : ''),
-      path.join(execDir, 'ffmpeg', filename),
-      path.join(execDir, '..', 'Resources', 'ffmpeg', filename),
-    ].filter(Boolean) as string[];
-
-    for (const candidate of candidates) {
-      try {
-        if (fs.existsSync(candidate)) {
-          console.log(`✓ 找到 FFprobe: ${candidate}`);
-          return candidate;
-        }
-      } catch {}
-    }
-
-    return filename;
+    return resolveFFmpegTool('ffprobe');
   }
 
   private setupIpcHandlers() {

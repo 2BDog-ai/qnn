@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { spawn } from 'child_process';
+import { buildFFmpegToolCandidates, isShellCommand, testFFmpegTool } from './ffmpegResolver';
 
 type VocalRemovalAlgorithm = 'demucs' | 'center_cancel' | 'karaoke';
 
@@ -482,34 +483,17 @@ class VocalRemoverManager {
   }
 
   private async detectFFmpeg(): Promise<{ available: boolean; path?: string; version?: string }> {
-    const executableName = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
-    const executableDir = path.dirname(process.execPath);
-
-    const candidates = this.uniquePaths([
-      process.env.FFMPEG_PATH || '',
-      path.join(process.cwd(), 'resources', 'ffmpeg', executableName),
-      path.join(app.getAppPath(), 'resources', 'ffmpeg', executableName),
-      path.join(process.resourcesPath || '', 'ffmpeg', executableName),
-      path.join(executableDir, 'ffmpeg', executableName),
-      path.join(executableDir, '..', 'Resources', 'ffmpeg', executableName),
-      'ffmpeg',
-      'ffmpeg.exe',
-      'C:\\ffmpeg\\bin\\ffmpeg.exe',
-      'C:\\Program Files\\FFmpeg\\bin\\ffmpeg.exe',
-      '/opt/homebrew/bin/ffmpeg',
-      '/usr/local/bin/ffmpeg',
-      '/usr/bin/ffmpeg'
-    ]);
+    const candidates = buildFFmpegToolCandidates('ffmpeg');
 
     for (const candidate of candidates) {
       if (!candidate) continue;
       try {
-        if (!['ffmpeg', 'ffmpeg.exe'].includes(candidate) && !fs.existsSync(candidate)) {
+        if (!isShellCommand(candidate) && !fs.existsSync(candidate)) {
           continue;
         }
-        const version = await this.getFFmpegVersion(candidate);
-        if (version) {
-          return { available: true, path: candidate, version };
+        const result = testFFmpegTool(candidate, 'ffmpeg');
+        if (result.ok) {
+          return { available: true, path: candidate, version: result.version };
         }
       } catch {
         continue;
@@ -517,33 +501,6 @@ class VocalRemoverManager {
     }
 
     return { available: false };
-  }
-
-  private async getFFmpegVersion(ffmpegPath: string): Promise<string | undefined> {
-    return await new Promise((resolve) => {
-      const child = spawn(ffmpegPath, ['-version'], { stdio: ['ignore', 'pipe', 'pipe'] });
-      let output = '';
-
-      child.stdout?.on('data', (data: Buffer) => {
-        output += data.toString();
-      });
-
-      child.on('error', () => resolve(undefined));
-      child.on('close', (code) => {
-        if (code !== 0 || !output.includes('ffmpeg version')) {
-          resolve(undefined);
-          return;
-        }
-        resolve(output.match(/ffmpeg version ([^\s]+)/)?.[1] || 'unknown');
-      });
-
-      setTimeout(() => {
-        if (!child.killed) {
-          child.kill();
-          resolve(undefined);
-        }
-      }, 5000);
-    });
   }
 
   private async testExecutable(command: string, args: string[], expectedText: string): Promise<boolean> {

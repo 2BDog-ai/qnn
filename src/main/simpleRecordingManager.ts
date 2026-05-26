@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { spawn } from 'child_process';
 import { promisify } from 'util';
+import { resolveFFmpegTool } from './ffmpegResolver';
 
 const mkdir = promisify(fs.mkdir);
 
@@ -69,18 +70,7 @@ class SimpleRecordingManager {
   }
 
   private getFFmpegPath(): string {
-    const platform = process.platform;
-    
-    if (platform === 'win32') {
-      // Windows: 优先使用系统安装的 FFmpeg (通过 winget 安装)
-      return 'ffmpeg.exe';
-    } else if (platform === 'darwin') {
-      // macOS: 优先使用系统安装的 FFmpeg
-      return 'ffmpeg';
-    } else {
-      // Linux: 优先使用系统安装的 FFmpeg
-      return 'ffmpeg';
-    }
+    return resolveFFmpegTool('ffmpeg');
   }
 
   /**

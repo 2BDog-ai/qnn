@@ -1,6 +1,6 @@
 {
   "name": "wedding-music-player",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "专业婚礼音乐播放器 - 支持音频播放、编辑、录音等功能",
   "main": "dist-electron/index.js",
   "scripts": {
@@ -275,10 +275,11 @@
       "requestedExecutionLevel": "asInvoker"
     },
     "nsis": {
+      "include": "build/installer.nsh",
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "allowElevation": true,
-      "createDesktopShortcut": true,
+      "createDesktopShortcut": "always",
       "createStartMenuShortcut": true,
       "shortcutName": "YIYU",
       "runAfterFinish": false,

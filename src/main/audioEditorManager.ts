@@ -2,6 +2,7 @@
 import * as path from 'path';
 import * as fs from 'fs/promises';
 import { spawn } from 'child_process';
+import { resolveFFmpegTool } from './ffmpegResolver';
 
 interface AudioEditOptions {
   inputFile: string;
@@ -43,107 +44,7 @@ export class AudioEditorManager {
    * 获取FFmpeg路径
    */
   private getFFmpegPath(): string {
-    const platform = process.platform;
-    const { app } = require('electron');
-    
-    try {
-      // 获取正确的资源路径
-      let resourcesPath: string;
-      
-      if (process.env.NODE_ENV === 'development') {
-        // 开发环境：使用项目目录下的resources
-        resourcesPath = path.join(process.cwd(), 'resources');
-        console.log('🔧 开发环境，使用项目resources路径:', resourcesPath);
-      } else {
-        // 生产环境：根据平台使用不同的资源路径策略
-        if (process.resourcesPath) {
-          // process.resourcesPath 在macOS中指向 MyApp.app/Contents/Resources/
-          // 所以我们的resources目录应该直接在这里
-          resourcesPath = path.join(process.resourcesPath, 'resources');
-          console.log('🔧 生产环境，使用process.resourcesPath:', resourcesPath);
-          
-          // 同时也检查是否直接在process.resourcesPath下
-          const alternativePath = process.resourcesPath;
-          console.log('🔧 备选路径检查:', alternativePath);
-        } else {
-          // 备用方案：使用app路径
-          const appPath = app.getAppPath();
-          if (platform === 'darwin') {
-            // macOS: app包结构为 MyApp.app/Contents/Resources/
-            resourcesPath = path.join(path.dirname(appPath), 'Resources', 'resources');
-          } else {
-            // 其他平台
-            resourcesPath = path.join(appPath, 'resources');
-          }
-          console.log('🔧 生产环境，使用app路径备用方案:', resourcesPath);
-        }
-      }
-      
-      if (platform === 'win32') {
-        // Windows: 使用内置的 FFmpeg
-        const bundledPaths = [
-          path.join(resourcesPath, 'ffmpeg', 'ffmpeg.exe'),
-          path.join(resourcesPath, 'ffmpeg', 'win', 'ffmpeg.exe')
-        ];
-        console.log('🔍 尝试使用内置FFmpeg路径 (Windows):', bundledPaths);
-        
-        for (const bundledFFmpegPath of bundledPaths) {
-          if (require('fs').existsSync(bundledFFmpegPath)) {
-            console.log('✅ 找到内置FFmpeg (Windows):', bundledFFmpegPath);
-            return bundledFFmpegPath;
-          }
-        }
-        
-        console.log('⚠️ 内置FFmpeg不存在，尝试系统FFmpeg');
-        return 'ffmpeg.exe';
-      } else if (platform === 'darwin') {
-        // macOS: 尝试多个可能的FFmpeg路径
-        // 根据实际打包结果，FFmpeg在Contents/ffmpeg/下
-        const appPath = app.getAppPath();
-        const possiblePaths = [
-          // 开发环境路径
-          path.join(resourcesPath, 'ffmpeg', 'ffmpeg'),
-          // 打包后的实际路径：MyApp.app/Contents/ffmpeg/ffmpeg
-          path.join(path.dirname(appPath), 'ffmpeg', 'ffmpeg'),
-          // 如果appPath是asar包，向上一级查找
-          path.join(path.dirname(path.dirname(appPath)), 'ffmpeg', 'ffmpeg'),
-          // 使用process.resourcesPath的父目录
-          path.join(process.resourcesPath ? path.dirname(process.resourcesPath) : '', 'ffmpeg', 'ffmpeg'),
-          // 备用路径：Resources下
-          path.join(process.resourcesPath || '', 'ffmpeg', 'ffmpeg')
-        ].filter(p => p); // 过滤空路径
-        
-        console.log('🔍 尝试多个FFmpeg路径 (macOS):', possiblePaths);
-        
-        for (const ffmpegPath of possiblePaths) {
-          if (require('fs').existsSync(ffmpegPath)) {
-            console.log('✅ 找到内置FFmpeg (macOS):', ffmpegPath);
-            return ffmpegPath;
-          } else {
-            console.log('❌ 路径不存在:', ffmpegPath);
-          }
-        }
-        
-        console.log('⚠️ 所有内置FFmpeg路径都不存在，尝试系统FFmpeg');
-        return 'ffmpeg';
-      } else {
-        // Linux: 尝试内置，然后回退到系统FFmpeg
-        const bundledFFmpegPath = path.join(resourcesPath, 'ffmpeg', 'ffmpeg');
-        console.log('🔍 尝试使用内置FFmpeg路径 (Linux):', bundledFFmpegPath);
-        
-        if (require('fs').existsSync(bundledFFmpegPath)) {
-          console.log('✅ 找到内置FFmpeg (Linux):', bundledFFmpegPath);
-          return bundledFFmpegPath;
-        } else {
-          console.log('⚠️ 内置FFmpeg不存在，尝试系统FFmpeg');
-          return 'ffmpeg';
-        }
-      }
-    } catch (error) {
-      console.error('❌ 获取FFmpeg路径失败:', error);
-      // 回退到系统FFmpeg
-      return platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
-    }
+    return resolveFFmpegTool('ffmpeg');
   }
 
   /**
@@ -578,16 +479,27 @@ export class AudioEditorManager {
         }
       });
 
-      this.currentProcess.on('close', (code: number) => {
+      this.currentProcess.on('close', (code: number | null, signal: NodeJS.Signals | null) => {
         this.currentProcess = null;
         
         if (code === 0) {
           resolve({ success: true });
         } else {
           console.error('FFmpeg错误输出:', errorOutput);
+          const reason = code !== null
+            ? `错误码: ${code}`
+            : signal
+              ? `信号: ${signal}`
+              : '进程异常退出';
+          const detail = errorOutput
+            .split(/\r?\n/)
+            .map((line) => line.trim())
+            .filter(Boolean)
+            .slice(-4)
+            .join('；');
           resolve({ 
             success: false, 
-            error: `剪辑失败 (错误码: ${code})` 
+            error: `剪辑失败 (${reason})${detail ? `：${detail}` : ''}` 
           });
         }
       });
