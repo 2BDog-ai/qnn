@@ -35,9 +35,9 @@ export const ConsoleRecordingModal: React.FC<ConsoleRecordingModalProps> = ({
   // 状态管理
   const [audioDevices, setAudioDevices] = useState<AudioDevice[]>([]);
   const [selectedDevice, setSelectedDevice] = useState<string>('');
-  const [sampleRate, setSampleRate] = useState<number>(48000);
-  const [channels, setChannels] = useState<number>(2);
-  const [bitDepth, setBitDepth] = useState<number>(24);
+  const [sampleRate, setSampleRate] = useState<number>(44100);
+  const [channels, setChannels] = useState<number>(1);
+  const [bitDepth, setBitDepth] = useState<number>(16);
   const [outputFormat, setOutputFormat] = useState<'wav' | 'mp3' | 'flac'>('wav');
   const [outputPath, setOutputPath] = useState<string>('');
   const [isLoading, setIsLoading] = useState(false);
@@ -78,6 +78,17 @@ export const ConsoleRecordingModal: React.FC<ConsoleRecordingModalProps> = ({
   // 初始化模态框
   const initializeModal = async () => {
     setErrorMessage('');
+
+    const platform = window.electronAPI?.system?.getPlatform?.();
+    if (platform === 'darwin') {
+      setSampleRate(48000);
+      setChannels(1);
+      setBitDepth(16);
+    } else {
+      setSampleRate(44100);
+      setChannels(1);
+      setBitDepth(16);
+    }
     
     // 设置默认输出路径
     try {

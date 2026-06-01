@@ -547,36 +547,39 @@ class ConsoleRecordingManager {
     const devices: Array<{ id: string; name: string; type: string }> = [];
     
     try {
-      // 解析FFmpeg的设备列表输出
-      const lines = output.split('\n');
-      let deviceIndex = 0;
-      
+      const lines = output.split(/\r?\n/);
+      let inAudioSection = false;
+      const seen = new Set<string>();
+
       lines.forEach((line) => {
-        if (line.includes('DirectShow audio devices') || line.includes('audio devices')) {
-          const deviceName = line.match(/"([^"]+)"/)?.[1];
-          if (deviceName) {
-            devices.push({
-              id: deviceIndex.toString(),
-              name: deviceName,
-              type: 'audio'
-            });
-            deviceIndex++;
-          }
+        if (/DirectShow audio devices/i.test(line)) {
+          inAudioSection = true;
+          return;
+        }
+        if (/DirectShow video devices/i.test(line)) {
+          inAudioSection = false;
+          return;
+        }
+        if (!inAudioSection) return;
+
+        const deviceName = line.match(/"([^"]+)"/)?.[1]?.trim();
+        if (deviceName && !seen.has(deviceName)) {
+          seen.add(deviceName);
+          devices.push({
+            id: `audio=${deviceName}`,
+            name: deviceName,
+            type: 'input'
+          });
         }
       });
 
       // 如果没有找到设备，添加默认设备
       if (devices.length === 0) {
-        devices.push(
-          { id: '0', name: '默认音频设备', type: 'audio' },
-          { id: '1', name: '线路输入', type: 'audio' }
-        );
+        devices.push({ id: 'audio=default', name: '默认录音设备', type: 'input' });
       }
     } catch (error) {
       console.error('解析FFmpeg设备输出失败:', error);
-      devices.push(
-        { id: '0', name: '默认音频设备', type: 'audio' }
-      );
+      devices.push({ id: 'audio=default', name: '默认录音设备', type: 'input' });
     }
 
     return devices;
@@ -810,9 +813,21 @@ class ConsoleRecordingManager {
         }
         
         // 根据输出格式构建参数
+        const audioFilters = [
+          `aresample=${options.sampleRate}:async=1000:first_pts=0`,
+          'highpass=f=30',
+          'lowpass=f=18000',
+          'alimiter=limit=0.97'
+        ].join(',');
         const baseArgs = [
+          '-hide_banner',
+          '-loglevel', 'warning',
+          '-thread_queue_size', '2048',
+          '-use_wallclock_as_timestamps', '1',
           '-f', 'avfoundation',
           '-i', audioInput,
+          '-fflags', '+genpts',
+          '-af', audioFilters,
           '-ar', options.sampleRate.toString(),
           '-ac', options.channels.toString()
         ];
@@ -848,29 +863,30 @@ class ConsoleRecordingManager {
         const inputFormat = process.platform === 'win32' ? 'dshow' : 'pulse';
         
         // 处理Windows dshow设备ID格式
-        let audioInput = 'audio=麦克风阵列 (Realtek(R) Audio)';  // 使用实际检测到的设备名
+        let audioInput = process.platform === 'win32' ? 'audio=default' : 'default';
         if (options.deviceId) {
-          // 如果是纯数字ID (0或1)，映射到实际设备
-          if (options.deviceId === '0') {
-            // 使用检测到的第一个音频设备
-            audioInput = 'audio=麦克风阵列 (Realtek(R) Audio)';
-          } else if (options.deviceId === '1') {
-            // 备用设备
-            audioInput = 'audio=立体声混音';
+          if (process.platform === 'win32' && /^\d+$/.test(options.deviceId)) {
+            audioInput = 'audio=default';
           } else if (options.deviceId.startsWith('audio=')) {
             // 已经是正确格式，直接使用
             audioInput = options.deviceId;
           } else {
             // 其他情况，包装成audio=设备名格式
-            audioInput = `audio=${options.deviceId}`;
+            audioInput = process.platform === 'win32' ? `audio=${options.deviceId}` : options.deviceId;
           }
         }
         
         console.log('使用音频输入:', audioInput);
         
         const baseArgs = [
+          '-hide_banner',
+          '-loglevel', 'warning',
+          '-thread_queue_size', '1024',
+          ...(process.platform === 'win32' ? ['-rtbufsize', '256M', '-audio_buffer_size', '80'] : []),
           '-f', inputFormat,
           '-i', audioInput,
+          '-fflags', '+genpts',
+          '-af', `aresample=${options.sampleRate}:async=1:first_pts=0`,
           '-ar', options.sampleRate.toString(),
           '-ac', options.channels.toString()
         ];

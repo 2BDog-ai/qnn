@@ -215,6 +215,8 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
       if (listDragSourceIdRef.current) {
         const rawInsertIndex = getListInsertionIndex(pointer.y);
         setListDragTarget(rawInsertIndex, rawInsertIndex);
+      } else if (gridDragSourceIdRef.current) {
+        setGridInsertTargetIndex(getGridInsertionIndex(pointer.x, pointer.y));
       }
     }
 
@@ -351,8 +353,35 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
     setGridInsertTargetIndex(null);
   };
 
+  const commitGridReorder = () => {
+    const sourceId = gridDragSourceIdRef.current;
+    const fallbackSourceIndex = gridDragSourceIndexRef.current;
+    const sourceIndex = sourceId
+      ? sortedMusicFiles.findIndex((music) => music.id === sourceId)
+      : fallbackSourceIndex;
+    const rawDestinationIndex = dragInsertIndexRef.current;
+
+    if (sourceIndex === null || sourceIndex < 0 || rawDestinationIndex === null) {
+      return;
+    }
+
+    const reordered = Array.from(sortedMusicFiles);
+    const [removed] = reordered.splice(sourceIndex, 1);
+    let destinationIndex = rawDestinationIndex;
+    if (destinationIndex > sourceIndex) destinationIndex -= 1;
+    destinationIndex = Math.max(0, Math.min(destinationIndex, reordered.length));
+
+    if (removed && destinationIndex !== sourceIndex) {
+      reordered.splice(destinationIndex, 0, removed);
+      if (onReorder) void onReorder(reordered.map(m => m.id));
+    }
+  };
+
   const handleGridDragStart = (event: React.DragEvent<HTMLDivElement>, music: MusicFile, index: number) => {
     event.stopPropagation();
+    if (!isManualSortMode && onStartManualSort) {
+      onStartManualSort();
+    }
     gridDragSourceIndexRef.current = index;
     gridDragSourceIdRef.current = music.id;
     setGridDraggingId(music.id);
@@ -377,10 +406,13 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
     const items = nodes
       .map((node) => ({
         index: Number(node.dataset.gridIndex),
+        id: node.dataset.gridId || '',
         rect: node.getBoundingClientRect()
       }))
-      .filter((item) => Number.isFinite(item.index))
+      .filter((item) => Number.isFinite(item.index) && item.id !== gridDragSourceIdRef.current)
       .sort((a, b) => a.index - b.index);
+
+    if (items.length === 0) return 0;
 
     const rows: Array<{
       top: number;
@@ -446,6 +478,12 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
     setGridInsertTargetIndex(getGridInsertionIndex(event.clientX, event.clientY));
   };
 
+  const handleGridDrag = (event: React.DragEvent<HTMLDivElement>) => {
+    if (!hasActiveGridDrag() || event.clientX === 0 && event.clientY === 0) return;
+    dragPointerRef.current = { x: event.clientX, y: event.clientY };
+    setGridInsertTargetIndex(getGridInsertionIndex(event.clientX, event.clientY));
+  };
+
   const handleGridContainerDragOver = (event: React.DragEvent<HTMLDivElement>) => {
     if (!hasActiveGridDrag()) return;
     event.preventDefault();
@@ -459,29 +497,14 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
     if (!hasActiveGridDrag()) return;
     event.preventDefault();
     event.stopPropagation();
-    const sourceId = gridDragSourceIdRef.current;
-    const fallbackSourceIndex = gridDragSourceIndexRef.current;
-    const sourceIndex = sourceId
-      ? sortedMusicFiles.findIndex((music) => music.id === sourceId)
-      : fallbackSourceIndex;
-    const rawDestinationIndex = dragInsertIndexRef.current;
+    commitGridReorder();
+    cleanupGridDrag();
+  };
 
-    if (sourceIndex === null || sourceIndex < 0 || rawDestinationIndex === null) {
-      cleanupGridDrag();
-      return;
+  const handleGridDragEnd = () => {
+    if (hasActiveGridDrag()) {
+      commitGridReorder();
     }
-
-    const reordered = Array.from(sortedMusicFiles);
-    const [removed] = reordered.splice(sourceIndex, 1);
-    let destinationIndex = rawDestinationIndex;
-    if (destinationIndex > sourceIndex) destinationIndex -= 1;
-    destinationIndex = Math.max(0, Math.min(destinationIndex, reordered.length));
-
-    if (removed && destinationIndex !== sourceIndex) {
-      reordered.splice(destinationIndex, 0, removed);
-      if (onReorder) void onReorder(reordered.map(m => m.id));
-    }
-
     cleanupGridDrag();
   };
 
@@ -664,12 +687,14 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
                           id={`music-item-${music.id}`}
                           draggable
                           onDragStart={(event) => handleGridDragStart(event, music, index)}
+                          onDrag={handleGridDrag}
                           data-grid-sort-item="true"
                           data-grid-index={index}
+                          data-grid-id={music.id}
                           onDragOver={handleGridItemDragOver}
                           onDragEnter={handleGridItemDragOver}
                           onDrop={handleGridDrop}
-                          onDragEnd={cleanupGridDrag}
+                          onDragEnd={handleGridDragEnd}
                           className={`group relative rounded-xl cursor-grab active:cursor-grabbing ${
                             selectedIds.has(music.id) ? 'ring-2 ring-blue-500' : ''
                           } ${
