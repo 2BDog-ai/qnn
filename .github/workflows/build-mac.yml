@@ -124,5 +124,4 @@ jobs:
           name: Wedding-Music-Player-${{ matrix.suffix }}
           path: |
             release/*.dmg
-            release/*.zip
           if-no-files-found: error
