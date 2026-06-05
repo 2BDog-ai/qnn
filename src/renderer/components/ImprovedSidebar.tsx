@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   PlaylistIcon,
   MusicNoteIcon,
@@ -69,6 +69,8 @@ export const ImprovedSidebar: React.FC<ImprovedSidebarProps> = ({
   const [draggedItem, setDraggedItem] = useState<string | null>(null);
   const [draggedOverIndex, setDraggedOverIndex] = useState<number | null>(null);
   const [isDragOverWithFiles, setIsDragOverWithFiles] = useState<string | null>(null);
+  const playlistListRef = useRef<HTMLDivElement | null>(null);
+  const playlistDragInsertIndexRef = useRef<number | null>(null);
   
   // 重命名对话框状态
   const [showRenameDialog, setShowRenameDialog] = useState(false);
@@ -111,6 +113,7 @@ export const ImprovedSidebar: React.FC<ImprovedSidebarProps> = ({
   // 拖拽处理函数
   const handleDragStart = (e: React.DragEvent, playlistId: string, index: number) => {
     setDraggedItem(playlistId);
+    playlistDragInsertIndexRef.current = index;
     e.dataTransfer.setData('text/plain', playlistId);
     e.dataTransfer.effectAllowed = 'move';
     
@@ -123,6 +126,7 @@ export const ImprovedSidebar: React.FC<ImprovedSidebarProps> = ({
   const handleDragEnd = (e: React.DragEvent) => {
     setDraggedItem(null);
     setDraggedOverIndex(null);
+    playlistDragInsertIndexRef.current = null;
     
     // 恢复样式
     if (e.currentTarget instanceof HTMLElement) {
@@ -140,7 +144,24 @@ export const ImprovedSidebar: React.FC<ImprovedSidebarProps> = ({
       setIsDragOverWithFiles(playlistId);
     } else {
       e.dataTransfer.dropEffect = 'move';
-      setDraggedOverIndex(index);
+      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+      const insertIndex = e.clientY > rect.top + rect.height / 2 ? index + 1 : index;
+      playlistDragInsertIndexRef.current = insertIndex;
+      setDraggedOverIndex(insertIndex);
+
+      const scrollEl = playlistListRef.current;
+      if (scrollEl) {
+        const scrollRect = scrollEl.getBoundingClientRect();
+        const edgeSize = 48;
+        const maxSpeed = 14;
+        if (e.clientY < scrollRect.top + edgeSize) {
+          const ratio = (edgeSize - Math.max(0, e.clientY - scrollRect.top)) / edgeSize;
+          scrollEl.scrollTop -= Math.max(2, Math.ceil(ratio * maxSpeed));
+        } else if (e.clientY > scrollRect.bottom - edgeSize) {
+          const ratio = (edgeSize - Math.max(0, scrollRect.bottom - e.clientY)) / edgeSize;
+          scrollEl.scrollTop += Math.max(2, Math.ceil(ratio * maxSpeed));
+        }
+      }
     }
   };
 
@@ -187,14 +208,23 @@ export const ImprovedSidebar: React.FC<ImprovedSidebarProps> = ({
     const draggedPlaylistId = e.dataTransfer.getData('text/plain');
     if (draggedPlaylistId && onPlaylistReorder) {
       const draggedIndex = playlists.findIndex(p => p.id === draggedPlaylistId);
-      if (draggedIndex !== -1 && draggedIndex !== targetIndex) {
-        onPlaylistReorder(draggedIndex, targetIndex);
+      const rawInsertIndex = playlistDragInsertIndexRef.current ?? targetIndex;
+      if (draggedIndex !== -1) {
+        let nextIndex = rawInsertIndex;
+        if (nextIndex > draggedIndex) {
+          nextIndex -= 1;
+        }
+        nextIndex = Math.max(0, Math.min(nextIndex, playlists.length - 1));
+        if (nextIndex !== draggedIndex) {
+          onPlaylistReorder(draggedIndex, nextIndex);
+        }
       }
     }
     
     setDraggedItem(null);
     setDraggedOverIndex(null);
     setIsDragOverWithFiles(null);
+    playlistDragInsertIndexRef.current = null;
   };
 
   // 移除默认导航菜单项
@@ -351,7 +381,7 @@ export const ImprovedSidebar: React.FC<ImprovedSidebarProps> = ({
             </button>
           </div>
           
-          <div className="space-y-1 px-4 max-h-64 overflow-y-auto">
+          <div ref={playlistListRef} className="space-y-1 px-4 max-h-64 overflow-y-auto">
             {playlists.length === 0 ? (
               <div className="text-center py-8">
                 <PlaylistIcon className="w-12 h-12 text-slate-600 mx-auto mb-3" />
@@ -388,6 +418,10 @@ export const ImprovedSidebar: React.FC<ImprovedSidebarProps> = ({
                   } ${
                     draggedOverIndex === index && draggedItem !== playlist.id
                       ? 'border-t-2 border-blue-500'
+                      : ''
+                  } ${
+                    draggedOverIndex === index + 1 && draggedItem !== playlist.id
+                      ? 'border-b-2 border-blue-500'
                       : ''
                   } ${
                     isDragOverWithFiles === playlist.id

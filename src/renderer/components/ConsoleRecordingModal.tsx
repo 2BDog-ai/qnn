@@ -41,6 +41,7 @@ export const ConsoleRecordingModal: React.FC<ConsoleRecordingModalProps> = ({
   const [outputFormat, setOutputFormat] = useState<'wav' | 'mp3' | 'flac'>('wav');
   const [outputPath, setOutputPath] = useState<string>('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isStarting, setIsStarting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string>('');
 
   // 组件挂载时初始化
@@ -50,6 +51,7 @@ export const ConsoleRecordingModal: React.FC<ConsoleRecordingModalProps> = ({
       setAudioDevices([]);
       setSelectedDevice('');
       setErrorMessage('');
+      setIsStarting(false);
       initializeModal();
       
       // 禁用窗口拖动
@@ -60,6 +62,9 @@ export const ConsoleRecordingModal: React.FC<ConsoleRecordingModalProps> = ({
       // Check microphone permission on Mac
       if (navigator.userAgent.includes('Macintosh') && navigator.mediaDevices) {
         navigator.mediaDevices.getUserMedia({ audio: true })
+          .then(stream => {
+            stream.getTracks().forEach(track => track.stop());
+          })
           .catch(err => {
             if (err.name === 'NotAllowedError') {
               setErrorMessage('请在系统设置中授予麦克风权限');
@@ -127,32 +132,20 @@ export const ConsoleRecordingModal: React.FC<ConsoleRecordingModalProps> = ({
           const inputDevice = devices.find((d: AudioDevice) => d.type === 'input') || devices[0];
           setSelectedDevice(inputDevice.id);
         } else {
-          // 没有检测到设备，使用默认设备
-          const defaultDevices = [
-            { id: '0', name: '默认麦克风', type: 'input' }
-          ];
-          setAudioDevices(defaultDevices);
-          setSelectedDevice('0');
-          setErrorMessage('未检测到音频设备，使用默认设备');
+          setAudioDevices([]);
+          setSelectedDevice('');
+          setErrorMessage('未检测到可用录音设备，请确认线路输入/麦克风已连接后点击刷新');
         }
       } else {
-        // API不可用，使用默认设备
-        const defaultDevices = [
-          { id: '0', name: '默认麦克风', type: 'input' }
-        ];
-        setAudioDevices(defaultDevices);
-        setSelectedDevice('0');
-        setErrorMessage('音频设备API不可用，使用默认设备');
+        setAudioDevices([]);
+        setSelectedDevice('');
+        setErrorMessage('音频设备API不可用，请重启应用后重试');
       }
     } catch (error) {
       console.error('加载音频设备失败:', error);
-      // 出错时使用默认设备
-      const defaultDevices = [
-        { id: '0', name: '默认麦克风', type: 'input' }
-      ];
-      setAudioDevices(defaultDevices);
-      setSelectedDevice('0');
-      setErrorMessage('加载设备失败，使用默认设备');
+      setAudioDevices([]);
+      setSelectedDevice('');
+      setErrorMessage('加载录音设备失败，请检查设备连接后点击刷新');
     } finally {
       setIsLoading(false);
     }
@@ -186,6 +179,10 @@ export const ConsoleRecordingModal: React.FC<ConsoleRecordingModalProps> = ({
 
   // 开始录音
   const handleStartRecording = () => {
+    if (isStarting) {
+      return;
+    }
+
     if (!selectedDevice) {
       alert('请选择录音设备');
       return;
@@ -211,6 +208,7 @@ export const ConsoleRecordingModal: React.FC<ConsoleRecordingModalProps> = ({
     };
 
     console.log('开始录音，参数:', options);
+    setIsStarting(true);
     onStartRecording(options);
     onClose();
   };
@@ -405,11 +403,11 @@ export const ConsoleRecordingModal: React.FC<ConsoleRecordingModalProps> = ({
           </button>
           <button
             onClick={handleStartRecording}
-            disabled={!selectedDevice || !outputPath || isLoading}
+            disabled={!selectedDevice || !outputPath || isLoading || isStarting}
             className="px-6 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white rounded-lg transition-colors flex items-center space-x-2"
           >
             <PlayIcon className="w-4 h-4" />
-            <span>开始录音</span>
+            <span>{isStarting ? '正在启动...' : '开始录音'}</span>
           </button>
         </div>
       </div>

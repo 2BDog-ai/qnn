@@ -688,15 +688,65 @@ export class DatabaseManager {
 
   // 更新歌单内歌曲排序
   public updatePlaylistMusicOrder(playlistId: string, musicIds: string[]): void {
-    const stmt = this.db.prepare('UPDATE playlist_music SET order_index = ? WHERE playlist_id = ? AND music_id = ?');
-    
-    musicIds.forEach((musicId, index) => {
-      stmt.run(index, playlistId, musicId);
+    const uniqueInputIds = Array.from(new Set(musicIds.filter(Boolean)));
+    const musicExistsStmt = this.db.prepare('SELECT 1 FROM music_files WHERE id = ?');
+    const validInputIds = uniqueInputIds.filter(musicId => Boolean(musicExistsStmt.get(musicId)));
+
+    const existingRows = this.db.prepare(`
+      SELECT pm.music_id
+      FROM playlist_music pm
+      JOIN music_files mf ON mf.id = pm.music_id
+      WHERE pm.playlist_id = ?
+      ORDER BY pm.order_index ASC, pm.added_time ASC
+    `).all(playlistId) as Array<{ music_id: string }>;
+
+    const inputIdSet = new Set(validInputIds);
+    const completeOrder = [
+      ...validInputIds,
+      ...existingRows.map(row => row.music_id).filter(musicId => !inputIdSet.has(musicId))
+    ];
+
+    const saveOrder = this.db.transaction((orderedIds: string[]) => {
+      const now = new Date().toISOString();
+      const insertStmt = this.db.prepare(`
+        INSERT OR IGNORE INTO playlist_music (playlist_id, music_id, order_index, added_time)
+        VALUES (?, ?, ?, ?)
+      `);
+      const updateOrderStmt = this.db.prepare(`
+        UPDATE playlist_music
+        SET order_index = ?
+        WHERE playlist_id = ? AND music_id = ?
+      `);
+
+      orderedIds.forEach((musicId, index) => {
+        insertStmt.run(playlistId, musicId, index, now);
+        updateOrderStmt.run(index, playlistId, musicId);
+      });
+
+      const stats = this.db.prepare(`
+        SELECT COUNT(*) as count, COALESCE(SUM(mf.duration), 0) as totalDuration
+        FROM playlist_music pm
+        JOIN music_files mf ON mf.id = pm.music_id
+        WHERE pm.playlist_id = ?
+      `).get(playlistId) as { count: number; totalDuration: number };
+
+      const updatePlaylistStmt = this.db.prepare(`
+        UPDATE playlists
+        SET sort_by = ?, sort_direction = ?, manual_order = ?, song_count = ?, total_duration = ?, updated_time = ?
+        WHERE id = ?
+      `);
+      updatePlaylistStmt.run(
+        'manual',
+        'desc',
+        JSON.stringify(orderedIds),
+        stats.count,
+        stats.totalDuration || 0,
+        now,
+        playlistId
+      );
     });
-    
-    // 更新歌单的手动顺序、数量和更新时间
-    const updatePlaylistStmt = this.db.prepare('UPDATE playlists SET manual_order = ?, song_count = ?, updated_time = ? WHERE id = ?');
-    updatePlaylistStmt.run(JSON.stringify(musicIds), musicIds.length, new Date().toISOString(), playlistId);
+
+    saveOrder(completeOrder);
   }
 
   private camelToSnakeCase(str: string): string {

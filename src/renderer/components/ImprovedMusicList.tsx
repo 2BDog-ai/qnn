@@ -189,8 +189,8 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
         const rect = isDocumentScroller
           ? { top: 0, bottom: window.innerHeight }
           : scrollTarget.getBoundingClientRect();
-        const edgeSize = Math.min(150, Math.max(110, (rect.bottom - rect.top) * 0.18));
-        const maxSpeed = 7;
+        const edgeSize = Math.min(190, Math.max(120, (rect.bottom - rect.top) * 0.22));
+        const maxSpeed = 18;
         let deltaY = 0;
 
         if (pointer.y < rect.top + edgeSize) {
@@ -259,12 +259,29 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
       dragPointerRef.current = { x: touch.clientX, y: touch.clientY };
     };
 
+    const handleDocumentDragOver = (event: DragEvent) => {
+      if (!isSortingDragRef.current) return;
+      if (Array.from(event.dataTransfer?.types || []).includes('Files')) return;
+
+      event.preventDefault();
+      dragPointerRef.current = { x: event.clientX, y: event.clientY };
+
+      if (listDragSourceIdRef.current) {
+        const rawInsertIndex = getListInsertionIndex(event.clientY);
+        setListDragTarget(rawInsertIndex, rawInsertIndex);
+      } else if (gridDragSourceIdRef.current) {
+        setGridInsertTargetIndex(getGridInsertionIndex(event.clientX, event.clientY));
+      }
+    };
+
     document.addEventListener('mousemove', handleMouseMove, { passive: true });
     document.addEventListener('touchmove', handleTouchMove, { passive: true });
+    document.addEventListener('dragover', handleDocumentDragOver);
 
     return () => {
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('touchmove', handleTouchMove);
+      document.removeEventListener('dragover', handleDocumentDragOver);
       stopSortingAutoScroll();
     };
   }, []);
@@ -379,9 +396,6 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
 
   const handleGridDragStart = (event: React.DragEvent<HTMLDivElement>, music: MusicFile, index: number) => {
     event.stopPropagation();
-    if (!isManualSortMode && onStartManualSort) {
-      onStartManualSort();
-    }
     gridDragSourceIndexRef.current = index;
     gridDragSourceIdRef.current = music.id;
     setGridDraggingId(music.id);

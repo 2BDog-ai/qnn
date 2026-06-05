@@ -26,11 +26,19 @@ interface RecordingSession {
   error?: string;
 }
 
+interface AudioDevice {
+  id: string;
+  name: string;
+  type: string;
+}
+
 class ConsoleRecordingManager {
   private isRecording = false;
+  private isStartingRecording = false;
+  private isStoppingRecording = false;
   private currentSession: RecordingSession | null = null;
   private recordingProcess: any = null;
-  private audioDevices: Array<{ id: string; name: string; type: string }> = [];
+  private audioDevices: AudioDevice[] = [];
   private deviceCheckInterval: NodeJS.Timeout | null = null;
   private mainWindow: BrowserWindow | null = null;
   private lastConsoleDetectionTime = 0;
@@ -143,6 +151,8 @@ class ConsoleRecordingManager {
    */
   private async getAudioDevices(): Promise<Array<{ id: string; name: string; type: string }>> {
     try {
+      let devices: AudioDevice[] = [];
+
       // macOS: 尝试确保麦克风权限，提高设备枚举与录音成功率
       if (process.platform === 'darwin') {
         try {
@@ -165,16 +175,25 @@ class ConsoleRecordingManager {
       // 在macOS上优先使用 ffmpeg avfoundation（之前此方式可用）
       if (process.platform === 'darwin') {
         const ffmpegDevices = await this.getMacAudioDevices();
-        if (ffmpegDevices.length > 0) return ffmpegDevices;
+        if (ffmpegDevices.length > 0) {
+          devices = ffmpegDevices;
+        } else {
         const profilerJsonDevices = await this.getMacAudioDevicesFromSystemProfiler();
-        if (profilerJsonDevices.length > 0) return profilerJsonDevices;
+          if (profilerJsonDevices.length > 0) {
+            devices = profilerJsonDevices;
+          } else {
         // 最后尝试 XML 解析
         const profilerXmlDevices = await this.getMacAudioDevicesFallback();
-        return profilerXmlDevices;
+            devices = profilerXmlDevices;
+          }
+        }
       } else {
         // 其他平台使用ffmpeg
-        return await this.getFFmpegAudioDevices();
+        devices = await this.getFFmpegAudioDevices();
       }
+
+      this.audioDevices = devices;
+      return devices;
     } catch (error) {
       console.error('获取音频设备失败:', error);
       return [];
@@ -548,8 +567,8 @@ class ConsoleRecordingManager {
     
     try {
       const lines = output.split(/\r?\n/);
-      let inAudioSection = false;
       const seen = new Set<string>();
+      let inAudioSection = false;
 
       lines.forEach((line) => {
         if (/DirectShow audio devices/i.test(line)) {
@@ -560,9 +579,19 @@ class ConsoleRecordingManager {
           inAudioSection = false;
           return;
         }
-        if (!inAudioSection) return;
 
-        const deviceName = line.match(/"([^"]+)"/)?.[1]?.trim();
+        let deviceName: string | undefined;
+
+        // FFmpeg 8.x DirectShow output can be: "Device Name" (audio)
+        const typedDeviceMatch = line.match(/"([^"]+)"\s*\((audio|video)\)/i);
+        if (typedDeviceMatch) {
+          if (typedDeviceMatch[2].toLowerCase() !== 'audio') return;
+          deviceName = typedDeviceMatch[1]?.trim();
+        } else {
+          if (!inAudioSection) return;
+          deviceName = line.match(/"([^"]+)"/)?.[1]?.trim();
+        }
+
         if (deviceName && !seen.has(deviceName)) {
           seen.add(deviceName);
           devices.push({
@@ -573,16 +602,48 @@ class ConsoleRecordingManager {
         }
       });
 
-      // 如果没有找到设备，添加默认设备
-      if (devices.length === 0) {
-        devices.push({ id: 'audio=default', name: '默认录音设备', type: 'input' });
-      }
+      this.audioDevices = devices;
     } catch (error) {
       console.error('解析FFmpeg设备输出失败:', error);
-      devices.push({ id: 'audio=default', name: '默认录音设备', type: 'input' });
     }
 
     return devices;
+  }
+
+  private async resolveWindowsDshowAudioInput(deviceId?: string): Promise<string> {
+    const rawDeviceId = (deviceId || '').trim();
+    const isUsableNamedDevice = rawDeviceId
+      && !/^\d+$/.test(rawDeviceId)
+      && rawDeviceId.toLowerCase() !== 'default'
+      && rawDeviceId.toLowerCase() !== 'audio=default';
+
+    if (isUsableNamedDevice) {
+      return rawDeviceId.startsWith('audio=') ? rawDeviceId : `audio=${rawDeviceId}`;
+    }
+
+    const cachedInput = this.audioDevices.find(device =>
+      device.type === 'input'
+      && device.id.startsWith('audio=')
+      && device.id.toLowerCase() !== 'audio=default'
+    );
+    if (cachedInput) {
+      console.log('使用已缓存的录音设备:', cachedInput.name);
+      return cachedInput.id;
+    }
+
+    const devices = await this.getAudioDevices();
+    const firstInput = devices.find(device =>
+      device.type === 'input'
+      && device.id.startsWith('audio=')
+      && device.id.toLowerCase() !== 'audio=default'
+    );
+
+    if (firstInput) {
+      console.log('未指定有效录音设备，自动选择:', firstInput.name);
+      return firstInput.id;
+    }
+
+    throw new Error('未检测到可用的Windows录音设备。请确认线路输入/麦克风已连接，并在系统设置中允许应用录音。');
   }
 
   /**
@@ -704,15 +765,83 @@ class ConsoleRecordingManager {
     }
   }
 
+  private emitStarted(outputPath: string) {
+    try {
+      if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+        this.mainWindow.webContents.send('console-recording:started', outputPath);
+      }
+    } catch (e) {
+      console.warn('发送开始事件失败:', e);
+    }
+  }
+
+  private terminateRecordingProcess(proc = this.recordingProcess, fast = false) {
+    if (!proc || proc.killed || proc.exitCode !== null) return;
+
+    try {
+      if (process.platform === 'win32') {
+        proc.kill('SIGTERM');
+        return;
+      }
+
+      if (proc.stdin && !proc.stdin.destroyed && proc.stdin.writable) {
+        try {
+          proc.stdin.write('q');
+          proc.stdin.end();
+        } catch {}
+      }
+
+      if (fast && proc.exitCode === null && !proc.killed) {
+        try {
+          proc.kill('SIGINT');
+        } catch {}
+      }
+
+      setTimeout(() => {
+        if (proc.exitCode === null && !proc.killed) {
+          try {
+            proc.kill('SIGINT');
+          } catch {}
+        }
+      }, fast ? 100 : 800);
+
+      setTimeout(() => {
+        if (proc.exitCode === null && !proc.killed) {
+          try {
+            proc.kill('SIGTERM');
+          } catch {}
+        }
+      }, fast ? 400 : 1600);
+
+      if (fast) {
+        setTimeout(() => {
+          if (proc.exitCode === null && !proc.killed) {
+            try {
+              proc.kill('SIGKILL');
+            } catch {}
+          }
+        }, 1000);
+      }
+    } catch (error) {
+      console.warn('停止FFmpeg录音进程失败:', error);
+    }
+  }
+
   /**
    * 开始录音
    */
   private async startRecording(options: ConsoleRecordingOptions): Promise<{ success: boolean; sessionId?: string; error?: string }> {
     try {
-      if (this.isRecording) {
-        const isAlive = this.recordingProcess && this.recordingProcess.exitCode === null;
-        if (isAlive) {
+      const activeProcess = this.recordingProcess && this.recordingProcess.exitCode === null;
+      if (this.isStartingRecording || this.isRecording || activeProcess) {
+        if (this.isStartingRecording) {
+          return { success: false, error: '录音正在启动，请稍候' };
+        }
+        if (this.isRecording && activeProcess) {
           return { success: false, error: '录音已在进行中' };
+        }
+        if (this.isStoppingRecording || activeProcess) {
+          return { success: false, error: '上一次录音正在结束，请稍候再试' };
         }
         // 清理陈旧状态
         this.isRecording = false;
@@ -733,6 +862,8 @@ class ConsoleRecordingManager {
         status: 'recording'
       };
 
+      this.isStartingRecording = true;
+      this.isStoppingRecording = false;
       this.isRecording = true;
 
       // 使用FFmpeg进行高质量录音
@@ -741,29 +872,22 @@ class ConsoleRecordingManager {
         throw new Error('录音启动失败');
       }
 
+      this.isStartingRecording = false;
+
       // 通知渲染进程开始（仅发送输出路径，保持兼容）
-      if (this.mainWindow && !this.mainWindow.isDestroyed()) {
-        this.mainWindow.webContents.send('console-recording:started', options.outputPath);
-      }
+      this.emitStarted(options.outputPath);
 
       return { success: true, sessionId };
     } catch (error) {
       console.error('开始录音失败:', error);
       // 复位状态
+      this.isStartingRecording = false;
+      this.isStoppingRecording = false;
       this.isRecording = false;
       this.currentSession = null;
-      try {
-        if (this.recordingProcess && this.recordingProcess.exitCode === null) {
-          this.recordingProcess.kill('SIGTERM');
-        }
-      } catch {}
+      this.terminateRecordingProcess();
       this.recordingProcess = null;
 
-      if (this.mainWindow && !this.mainWindow.isDestroyed()) {
-        this.mainWindow.webContents.send('console-recording:error', {
-          message: error instanceof Error ? error.message : '录音启动失败',
-        });
-      }
       return { success: false, error: error instanceof Error ? error.message : '未知错误' };
     }
   }
@@ -814,10 +938,7 @@ class ConsoleRecordingManager {
         
         // 根据输出格式构建参数
         const audioFilters = [
-          `aresample=${options.sampleRate}:async=1000:first_pts=0`,
-          'highpass=f=30',
-          'lowpass=f=18000',
-          'alimiter=limit=0.97'
+          `aresample=${options.sampleRate}:async=1:first_pts=0`
         ].join(',');
         const baseArgs = [
           '-hide_banner',
@@ -863,17 +984,14 @@ class ConsoleRecordingManager {
         const inputFormat = process.platform === 'win32' ? 'dshow' : 'pulse';
         
         // 处理Windows dshow设备ID格式
-        let audioInput = process.platform === 'win32' ? 'audio=default' : 'default';
-        if (options.deviceId) {
-          if (process.platform === 'win32' && /^\d+$/.test(options.deviceId)) {
-            audioInput = 'audio=default';
-          } else if (options.deviceId.startsWith('audio=')) {
-            // 已经是正确格式，直接使用
-            audioInput = options.deviceId;
-          } else {
-            // 其他情况，包装成audio=设备名格式
-            audioInput = process.platform === 'win32' ? `audio=${options.deviceId}` : options.deviceId;
-          }
+        let audioInput: string;
+        try {
+          audioInput = process.platform === 'win32'
+            ? await this.resolveWindowsDshowAudioInput(options.deviceId)
+            : (options.deviceId || 'default');
+        } catch (error) {
+          reject(error instanceof Error ? error : new Error(String(error)));
+          return;
         }
         
         console.log('使用音频输入:', audioInput);
@@ -881,6 +999,7 @@ class ConsoleRecordingManager {
         const baseArgs = [
           '-hide_banner',
           '-loglevel', 'warning',
+          ...(process.platform === 'win32' ? ['-nostdin'] : []),
           '-thread_queue_size', '1024',
           ...(process.platform === 'win32' ? ['-rtbufsize', '256M', '-audio_buffer_size', '80'] : []),
           '-f', inputFormat,
@@ -921,13 +1040,46 @@ class ConsoleRecordingManager {
 
       console.log('FFmpeg录音参数:', ffmpegArgs.join(' '));
 
-      this.recordingProcess = spawn(this.getFFmpegPath(), ffmpegArgs);
+      this.recordingProcess = spawn(this.getFFmpegPath(), ffmpegArgs, {
+        windowsHide: true,
+        stdio: ['pipe', 'ignore', 'pipe']
+      });
+      const processRef = this.recordingProcess;
       let errorOutput = '';
       let hasStarted = false;
       let settled = false;
+      let startupTimer: NodeJS.Timeout | null = null;
+      let timeoutTimer: NodeJS.Timeout | null = null;
+
+      const clearStartupTimers = () => {
+        if (startupTimer) {
+          clearTimeout(startupTimer);
+          startupTimer = null;
+        }
+        if (timeoutTimer) {
+          clearTimeout(timeoutTimer);
+          timeoutTimer = null;
+        }
+      };
+
+      const finishStartup = () => {
+        if (settled || processRef.exitCode !== null) return;
+        hasStarted = true;
+        settled = true;
+        clearStartupTimers();
+        console.log('FFmpeg录音进程已稳定运行');
+        resolve(true);
+      };
+
+      const failStartup = (error: Error) => {
+        if (settled) return;
+        settled = true;
+        clearStartupTimers();
+        reject(error);
+      };
 
       // 收集stderr输出用于调试
-      this.recordingProcess.stderr?.on('data', (data: Buffer) => {
+      processRef.stderr?.on('data', (data: Buffer) => {
         const output = data.toString();
         errorOutput += output;
         if (output.toLowerCase().includes('error') || output.toLowerCase().includes('device') || output.toLowerCase().includes('invalid')) {
@@ -935,59 +1087,81 @@ class ConsoleRecordingManager {
         }
         // 判断开始录音的信号
         if (!hasStarted && (output.includes('Press [q] to stop') || /size=\s*\d+/.test(output))) {
-          hasStarted = true;
-          if (!settled) {
-            settled = true;
-            resolve(true);
-          }
+          finishStartup();
         }
       });
 
-      this.recordingProcess.on('error', (error: Error) => {
+      processRef.on('error', (error: Error) => {
         console.error('FFmpeg录音错误:', error);
         console.error('FFmpeg错误输出:', errorOutput);
         if (this.currentSession) {
           this.currentSession.status = 'error';
           this.currentSession.error = error.message;
         }
-        if (!settled) {
-          settled = true;
-          reject(error);
-        }
+        failStartup(error);
       });
 
-      this.recordingProcess.on('close', (code: number) => {
+      processRef.on('close', (code: number | null, signal: NodeJS.Signals | null) => {
         // 进程退出时，统一重置状态并通知前端
+        const wasRecording = this.isRecording;
+        const wasStopping = this.isStoppingRecording;
+        const expectedStop = wasStopping || code === 0 || code === 255 || signal === 'SIGINT' || signal === 'SIGTERM';
+        clearStartupTimers();
+
         if (this.currentSession) {
-          this.currentSession.status = 'completed';
+          this.currentSession.status = expectedStop || !wasRecording ? 'completed' : 'error';
           this.currentSession.duration = Date.now() - this.currentSession.startTime.getTime();
         }
-        this.isRecording = false;
-        this.emitStopped();
 
-        if (code === 0) {
-          console.log('FFmpeg录音完成');
-          resolve(true);
-        } else if (code !== null && code !== 255) { // 255是被kill的退出码
-          console.error('FFmpeg异常退出，退出码:', code);
-          console.error('FFmpeg错误输出:', errorOutput);
-          reject(new Error(`FFmpeg退出码: ${code}\n错误输出: ${errorOutput}`));
+        if (this.recordingProcess === processRef) {
+          this.recordingProcess = null;
+        }
+        this.isStartingRecording = false;
+        this.isStoppingRecording = false;
+
+        if (wasRecording) {
+          this.isRecording = false;
+          this.emitStopped();
+        }
+
+        if (!settled) {
+          const details = [
+            `FFmpeg录音进程在启动阶段退出`,
+            `退出码: ${code ?? 'null'}`,
+            signal ? `信号: ${signal}` : '',
+            errorOutput ? `错误输出: ${errorOutput}` : ''
+          ].filter(Boolean).join('\n');
+          failStartup(new Error(details));
+        } else if (!expectedStop) {
+          if (wasRecording && code !== null) {
+            console.error('FFmpeg录音过程中异常退出，退出码:', code);
+            console.error('FFmpeg错误输出:', errorOutput);
+            if (this.currentSession) {
+              this.currentSession.status = 'error';
+              this.currentSession.error = `FFmpeg退出码: ${code}`;
+            }
+            if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+              this.mainWindow.webContents.send('console-recording:error', {
+                message: `录音过程中FFmpeg异常退出: ${code}`,
+              });
+            }
+          }
         }
       });
 
+      const startupDelay = process.platform === 'darwin' ? 800 : process.platform === 'win32' ? 1200 : 2000;
+      startupTimer = setTimeout(() => {
+        finishStartup();
+      }, startupDelay);
+
       // 启动超时：延长到15秒，给足够时间处理权限请求
-      setTimeout(() => {
+      timeoutTimer = setTimeout(() => {
         if (!settled) {
           console.error('FFmpeg启动超时');
           console.error('FFmpeg命令:', this.getFFmpegPath(), ffmpegArgs.join(' '));
           console.error('FFmpeg错误输出:', errorOutput);
-          try {
-            if (this.recordingProcess && this.recordingProcess.exitCode === null) {
-              this.recordingProcess.kill('SIGTERM');
-            }
-          } catch {}
-          settled = true;
-          reject(new Error(`录音启动超时 - 可能需要麦克风权限\n命令: ${ffmpegArgs.join(' ')}\n错误: ${errorOutput}`));
+          this.terminateRecordingProcess(processRef);
+          failStartup(new Error(`录音启动超时 - 可能需要麦克风权限\n命令: ${ffmpegArgs.join(' ')}\n错误: ${errorOutput}`));
         }
       }, 15000);
     });
@@ -1002,17 +1176,16 @@ class ConsoleRecordingManager {
         return { success: false, error: '没有正在进行的录音' };
       }
 
+      this.isStoppingRecording = true;
+      this.isStartingRecording = false;
+
       // 停止FFmpeg进程
-      if (this.recordingProcess && !this.recordingProcess.killed) {
-        // 使用SIGINT优雅停止录音，让FFmpeg正确关闭文件
-        this.recordingProcess.stdin?.write('q'); // 发送'q'键停止录音
-        setTimeout(() => {
-          // 如果1秒后进程还没结束，强制终止
-          if (this.recordingProcess && !this.recordingProcess.killed) {
-            this.recordingProcess.kill('SIGTERM');
-          }
-        }, 1000);
+      if (this.recordingProcess && !this.recordingProcess.killed && this.recordingProcess.exitCode === null) {
+        // 使用q/SIGINT/SIGTERM逐级停止录音，让FFmpeg正确关闭文件并释放麦克风
+        this.terminateRecordingProcess();
+      } else {
         this.recordingProcess = null;
+        this.isStoppingRecording = false;
       }
 
       // 更新会话状态
@@ -1103,9 +1276,11 @@ class ConsoleRecordingManager {
   /**
    * 获取录音状态
    */
-  private getRecordingStatus(): { isRecording: boolean; session: RecordingSession | null } {
+  private getRecordingStatus(): { isRecording: boolean; isStarting: boolean; isStopping: boolean; session: RecordingSession | null } {
     return {
       isRecording: this.isRecording,
+      isStarting: this.isStartingRecording,
+      isStopping: this.isStoppingRecording,
       session: this.currentSession
     };
   }
@@ -1120,18 +1295,24 @@ class ConsoleRecordingManager {
       this.deviceCheckInterval = null;
     }
     
-    // 优雅停止录音进程
-    if (this.recordingProcess && !this.recordingProcess.killed) {
-      this.recordingProcess.stdin?.write('q'); // 先尝试优雅退出
+    // 退出应用时必须停止FFmpeg，确保macOS麦克风占用能释放
+    const proc = this.recordingProcess;
+    if (proc && !proc.killed && proc.exitCode === null) {
+      this.isStoppingRecording = true;
+      this.terminateRecordingProcess(proc, true);
       setTimeout(() => {
-        if (this.recordingProcess && !this.recordingProcess.killed) {
-          this.recordingProcess.kill('SIGTERM'); // 强制终止
+        if (this.recordingProcess === proc) {
+          this.recordingProcess = null;
         }
-        this.recordingProcess = null;
-      }, 1000);
+        this.isStoppingRecording = false;
+      }, 1200);
+    } else {
+      this.recordingProcess = null;
+      this.isStoppingRecording = false;
     }
     
     // 重置状态
+    this.isStartingRecording = false;
     this.isRecording = false;
     this.currentSession = null;
   }

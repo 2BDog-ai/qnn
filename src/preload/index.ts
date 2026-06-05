@@ -244,6 +244,12 @@ const consoleRecordingAPI = {
   onRecordingStopped: (callback: () => void) => {
     ipcRenderer.on('console-recording:stopped', callback);
     return () => ipcRenderer.removeAllListeners('console-recording:stopped');
+  },
+
+  // 监听录音错误事件
+  onRecordingError: (callback: (error: any) => void) => {
+    ipcRenderer.on('console-recording:error', (event, error) => callback(error));
+    return () => ipcRenderer.removeAllListeners('console-recording:error');
   }
 };
 

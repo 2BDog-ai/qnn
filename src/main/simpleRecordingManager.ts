@@ -140,15 +140,78 @@ class SimpleRecordingManager {
           }
         }, 500); // Reduced to 500ms
       } else {
-        // Windows/Linux - 返回默认设备
-        const defaultDevices = [
-          { id: 'default', name: '默认麦克风', type: 'input' }
-        ];
-        this.deviceCache = defaultDevices;
-        this.lastCacheTime = now;
-        resolve(defaultDevices);
+        const ffmpegPath = this.getFFmpegPath();
+        const inputFormat = process.platform === 'win32' ? 'dshow' : 'pulse';
+        const args = process.platform === 'win32'
+          ? ['-hide_banner', '-list_devices', 'true', '-f', inputFormat, '-i', 'dummy']
+          : ['-hide_banner', '-f', inputFormat, '-sources', 'default'];
+        const ffmpeg = spawn(ffmpegPath, args);
+        let output = '';
+
+        ffmpeg.stderr.on('data', (data) => {
+          output += data.toString();
+        });
+
+        ffmpeg.on('close', () => {
+          const devices: Array<{ id: string; name: string; type: string }> = [];
+          const seen = new Set<string>();
+
+          for (const line of output.split(/\r?\n/)) {
+            const match = line.match(/"([^"]+)"\s*\((audio|video)\)/i) || line.match(/"([^"]+)"/);
+            if (!match) continue;
+            const name = match[1].trim();
+            const type = match[2]?.toLowerCase();
+            if (type && type !== 'audio') continue;
+            if (seen.has(name)) continue;
+            seen.add(name);
+            devices.push({
+              id: process.platform === 'win32' ? `audio=${name}` : name,
+              name,
+              type: 'input'
+            });
+          }
+
+          this.deviceCache = devices;
+          this.lastCacheTime = now;
+          resolve(devices);
+        });
+
+        ffmpeg.on('error', () => {
+          this.deviceCache = [];
+          this.lastCacheTime = now;
+          resolve([]);
+        });
+
+        setTimeout(() => {
+          if (!ffmpeg.killed) {
+            ffmpeg.kill('SIGTERM');
+            resolve(this.deviceCache || []);
+          }
+        }, 3000);
       }
     });
+  }
+
+  private async resolveWindowsDshowAudioInput(deviceId?: string): Promise<string> {
+    const rawDeviceId = (deviceId || '').trim();
+    if (
+      rawDeviceId
+      && !/^\d+$/.test(rawDeviceId)
+      && rawDeviceId.toLowerCase() !== 'default'
+      && rawDeviceId.toLowerCase() !== 'audio=default'
+    ) {
+      return rawDeviceId.startsWith('audio=') ? rawDeviceId : `audio=${rawDeviceId}`;
+    }
+
+    const devices = this.deviceCache || await this.getAudioDevices();
+    const input = devices.find(device =>
+      device.type === 'input'
+      && device.id.startsWith('audio=')
+      && device.id.toLowerCase() !== 'audio=default'
+    );
+    if (input) return input.id;
+
+    throw new Error('未检测到可用的Windows录音设备');
   }
 
   /**
@@ -202,7 +265,7 @@ class SimpleRecordingManager {
    * 使用FFmpeg录音
    */
   private async startFFmpegRecording(options: ConsoleRecordingOptions): Promise<boolean> {
-    return new Promise((resolve) => {
+    return new Promise(async (resolve) => {
       let ffmpegArgs: string[] = [];
 
       if (process.platform === 'darwin') {
@@ -229,10 +292,22 @@ class SimpleRecordingManager {
         ffmpegArgs.push('-y', options.outputPath);
       } else {
         // Windows/Linux
-        const inputDevice = process.platform === 'win32' ? 'audio=Microphone' : 'default';
+        let inputDevice: string;
+        try {
+          inputDevice = process.platform === 'win32'
+            ? await this.resolveWindowsDshowAudioInput(options.deviceId)
+            : (options.deviceId || 'default');
+        } catch (error) {
+          console.error('解析录音设备失败:', error);
+          resolve(false);
+          return;
+        }
         const inputFormat = process.platform === 'win32' ? 'dshow' : 'pulse';
         
         ffmpegArgs = [
+          '-hide_banner',
+          '-loglevel', 'warning',
+          ...(process.platform === 'win32' ? ['-nostdin'] : []),
           '-f', inputFormat,
           '-i', inputDevice,
           '-ar', options.sampleRate.toString(),
@@ -254,7 +329,7 @@ class SimpleRecordingManager {
       console.log('FFmpeg命令: ffmpeg', ffmpegArgs.join(' '));
       
       const ffmpegPath = this.getFFmpegPath();
-      this.recordingProcess = spawn(ffmpegPath, ffmpegArgs);
+      this.recordingProcess = spawn(ffmpegPath, ffmpegArgs, { windowsHide: true });
       
       let hasStarted = false;
 
@@ -290,6 +365,14 @@ class SimpleRecordingManager {
         }
       });
 
+      setTimeout(() => {
+        if (!hasStarted && this.recordingProcess && this.recordingProcess.exitCode === null) {
+          hasStarted = true;
+          console.log('FFmpeg录音进程已稳定运行');
+          resolve(true);
+        }
+      }, process.platform === 'win32' ? 1200 : 2000);
+
       // 超时检查
       setTimeout(() => {
         if (!hasStarted) {
@@ -315,7 +398,7 @@ class SimpleRecordingManager {
       console.log('停止FFmpeg录音...');
       
       // 优雅停止FFmpeg
-      if (this.recordingProcess.stdin && !this.recordingProcess.stdin.destroyed) {
+      if (process.platform !== 'win32' && this.recordingProcess.stdin && !this.recordingProcess.stdin.destroyed) {
         this.recordingProcess.stdin.write('q');
       } else {
         this.recordingProcess.kill('SIGTERM');

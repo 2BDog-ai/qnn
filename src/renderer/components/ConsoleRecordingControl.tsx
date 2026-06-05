@@ -4,6 +4,7 @@ import { MicrophoneIcon, StopIcon, ClockIcon } from './icons/AudioIcons';
 interface ConsoleRecordingControlProps {
   onStartRecording: (options: any) => void;
   isGlobalRecording?: boolean;
+  isRecordingStarting?: boolean;
   globalRecordingTime?: number;
   globalRecordingPath?: string;
   onGlobalStopRecording?: () => void;
@@ -12,6 +13,7 @@ interface ConsoleRecordingControlProps {
 export const ConsoleRecordingControl: React.FC<ConsoleRecordingControlProps> = ({
   onStartRecording,
   isGlobalRecording = false,
+  isRecordingStarting = false,
   globalRecordingTime = 0,
   globalRecordingPath = '',
   onGlobalStopRecording
@@ -90,6 +92,18 @@ export const ConsoleRecordingControl: React.FC<ConsoleRecordingControlProps> = (
             <span>停止录音</span>
           </button>
         </div>
+      ) : isRecordingStarting ? (
+        <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+          <div className="flex items-center space-x-3">
+            <div className="w-3 h-3 bg-blue-500 rounded-full animate-pulse"></div>
+            <span className="text-sm font-medium text-blue-900">正在启动录音...</span>
+          </div>
+          {recordingPath && (
+            <p className="text-xs text-blue-700 mt-3">
+              保存到: {recordingPath}
+            </p>
+          )}
+        </div>
       ) : (
         <div className="mb-6">
           {recordingPath && recordingTime > 0 ? (
@@ -122,9 +136,10 @@ export const ConsoleRecordingControl: React.FC<ConsoleRecordingControlProps> = (
         <div className="text-center">
           <button
             onClick={handleStartClick}
-            className="px-8 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors font-medium"
+            disabled={isRecordingStarting}
+            className="px-8 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white rounded-lg transition-colors font-medium"
           >
-            配置并开始录音
+            {isRecordingStarting ? '正在启动...' : '配置并开始录音'}
           </button>
         </div>
       )}

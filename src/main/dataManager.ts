@@ -418,20 +418,33 @@ export class DataManager extends EventEmitter {
 
   public updatePlaylistMusicOrder(playlistId: string, musicIds: string[]): void {
     const playlist = this.playlists.get(playlistId);
+    const orderedMusicIds = Array.from(new Set(musicIds.filter(id => this.musicFiles.has(id))));
+
     if (playlist) {
+      const orderedIdSet = new Set(orderedMusicIds);
+      const completeMusicIds = [
+        ...orderedMusicIds,
+        ...playlist.audioFiles.filter(id => !orderedIdSet.has(id) && this.musicFiles.has(id))
+      ];
+
       // 更新内存中的歌曲顺序
-      playlist.audioFiles = musicIds;
-      playlist.manualOrder = musicIds;
-      playlist.songCount = musicIds.length;
-      playlist.totalDuration = this.calculateTotalDuration(musicIds);
+      playlist.audioFiles = completeMusicIds;
+      playlist.manualOrder = completeMusicIds;
+      playlist.sortBy = 'manual';
+      playlist.sortDirection = 'desc';
+      playlist.songCount = completeMusicIds.length;
+      playlist.totalDuration = this.calculateTotalDuration(completeMusicIds);
       playlist.updatedTime = new Date();
       this.playlists.set(playlistId, playlist);
       
       // 更新数据库中的排序
-      this.db.updatePlaylistMusicOrder(playlistId, musicIds);
+      this.db.updatePlaylistMusicOrder(playlistId, completeMusicIds);
       
       this.emit('playlistUpdated', playlist);
-      this.emit('playlistMusicOrderUpdated', { playlistId, musicIds });
+      this.emit('playlistMusicOrderUpdated', { playlistId, musicIds: completeMusicIds });
+    } else {
+      this.db.updatePlaylistMusicOrder(playlistId, orderedMusicIds);
+      this.loadData();
     }
   }
 

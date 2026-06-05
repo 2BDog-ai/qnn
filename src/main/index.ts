@@ -511,16 +511,14 @@ app.whenReady().then(async () => {
 
 // 所有窗口关闭时退出应用
 app.on('window-all-closed', () => {
-  // 不主动清理录音，保持后台录音，仅在非 macOS 时退出应用
-  if (process.platform !== 'darwin') {
-    app.quit();
-  }
+  consoleRecordingManager.cleanup();
+  app.quit();
 });
 
 // 应用退出前清理
 app.on('before-quit', () => {
   try {
-    // 不强制停止录音，仅清理非录音关键模块
+    consoleRecordingManager.cleanup();
     vocalRemoverManager.cleanup();
     audioEditorManager.cleanup();
   } catch (error) {

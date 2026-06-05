@@ -431,7 +431,58 @@ function ImprovedApp() {
       return;
     }
     
-    console.log('🔄 拖拽排序后自动保存:', ids);
+    const buildCompleteManualOrder = (): string[] => {
+      let baseList: MusicFile[] = [];
+
+      if (activeView === 'all-music') {
+        baseList = musicFiles;
+      } else if (activeView === 'favorites') {
+        baseList = musicFiles.filter(music => music.isFavorite);
+      } else if (activeView === 'recent' || activeView === 'folders') {
+        baseList = musicFiles;
+      } else if (activeView.startsWith('playlist-')) {
+        const playlistId = activeView.replace('playlist-', '');
+        const playlist = playlists.find(p => p.id === playlistId);
+        if (playlist) {
+          const musicMap = new Map(musicFiles.map(music => [music.id, music]));
+          baseList = [...new Set(playlist.audioFiles)]
+            .map(id => musicMap.get(id))
+            .filter((music): music is MusicFile => Boolean(music));
+        }
+      }
+
+      const fullOrderedIds = applySortingToMusicList(baseList).map(music => music.id);
+      if (fullOrderedIds.length === 0) return ids;
+
+      const visibleIdSet = new Set(ids);
+      const visibleIdsInFullOrder = fullOrderedIds.filter(id => visibleIdSet.has(id));
+      if (visibleIdsInFullOrder.length === fullOrderedIds.length) {
+        return ids;
+      }
+
+      let visibleCursor = 0;
+      const mergedOrder = fullOrderedIds.map(id => {
+        if (!visibleIdSet.has(id)) return id;
+        const replacement = ids[visibleCursor];
+        visibleCursor += 1;
+        return replacement || id;
+      });
+
+      for (const id of ids) {
+        if (!mergedOrder.includes(id)) {
+          mergedOrder.push(id);
+        }
+      }
+
+      return mergedOrder;
+    };
+
+    const completeOrder = buildCompleteManualOrder();
+    console.log('🔄 拖拽排序后自动保存:', {
+      activeView,
+      visibleCount: ids.length,
+      completeCount: completeOrder.length
+    });
     
     // 实时更新手动排序状态
     const currentId = activeView.startsWith('playlist-') ? activeView.replace('playlist-', '') : 'all-music';
@@ -441,28 +492,44 @@ function ImprovedApp() {
         ...prev[currentId],
         sortBy: 'manual',
         sortDirection: 'desc',
-        manualOrder: ids
+        manualOrder: completeOrder
       }
     }));
     
-    // 如果是在"所有音乐"视图中，同时更新全局 musicFiles 的顺序（用于显示）
+    // 放手后立即更新本地顺序，数据库保存放到后台完成。
     if (activeView === 'all-music') {
       setMusicFiles(prev => {
-        const idSet = new Set(ids);
-        const reordered = ids.map(id => prev.find(m => m.id === id)!).filter(Boolean);
+        const idSet = new Set(completeOrder);
+        const reordered = completeOrder.map(id => prev.find(m => m.id === id)!).filter(Boolean);
         const remaining = prev.filter(m => !idSet.has(m.id));
         return [...reordered, ...remaining];
       });
+    } else if (activeView.startsWith('playlist-')) {
+      const playlistId = activeView.replace('playlist-', '');
+      setPlaylists(prev => prev.map(playlist => (
+        playlist.id === playlistId
+          ? {
+              ...playlist,
+              audioFiles: completeOrder,
+              sortBy: 'manual' as const,
+              sortDirection: 'desc' as const,
+              manualOrder: completeOrder,
+              songCount: completeOrder.length,
+              updatedTime: new Date()
+            }
+          : playlist
+      )));
     }
     
     try {
-      await setCurrentSortState('manual', 'desc', ids);
+      await setCurrentSortState('manual', 'desc', completeOrder);
       setIsManualSortMode(false);
       setManualSortOriginalState(null);
-      console.log(`✅ 手动排序已自动保存 - 视图: ${activeView}, 顺序: ${ids.length} 个项目`);
+      console.log(`✅ 手动排序已自动保存 - 视图: ${activeView}, 顺序: ${completeOrder.length} 个项目`);
     } catch (error) {
       console.error('自动保存手动排序失败:', error);
       notify.error('保存失败', '排序已调整，但自动保存失败，请重试');
+      await reloadMusicData();
     }
   };
 
@@ -619,6 +686,7 @@ function ImprovedApp() {
   
   // 全局录音状态管理
   const [isGlobalRecording, setIsGlobalRecording] = useState(false);
+  const [isRecordingStarting, setIsRecordingStarting] = useState(false);
   const [globalRecordingTime, setGlobalRecordingTime] = useState(0);
   const [globalRecordingPath, setGlobalRecordingPath] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
@@ -712,21 +780,34 @@ function ImprovedApp() {
   useEffect(() => {
     let unsubscribeStarted: (() => void) | null = null;
     let unsubscribeStopped: (() => void) | null = null;
+    let unsubscribeError: (() => void) | null = null;
     let recordingTimer: NodeJS.Timeout | null = null;
+
+    const clearRecordingTimer = () => {
+      if (recordingTimer) {
+        clearInterval(recordingTimer);
+        recordingTimer = null;
+      }
+    };
+
+    const startRecordingTimer = (initialSeconds = 0) => {
+      clearRecordingTimer();
+      setGlobalRecordingTime(initialSeconds);
+      recordingTimer = setInterval(() => {
+        setGlobalRecordingTime(prev => prev + 1);
+      }, 1000);
+    };
 
     if (window.electronAPI?.consoleRecording) {
       // 监听录音开始事件
       if (window.electronAPI.consoleRecording.onRecordingStarted) {
         unsubscribeStarted = window.electronAPI.consoleRecording.onRecordingStarted((path: string) => {
           console.log('全局监听：录音已开始，文件路径:', path);
+          setIsRecordingStarting(false);
           setIsGlobalRecording(true);
           setGlobalRecordingPath(path);
-          setGlobalRecordingTime(0);
-          
-          // 开始计时器
-          recordingTimer = setInterval(() => {
-            setGlobalRecordingTime(prev => prev + 1);
-          }, 1000);
+          startRecordingTimer(0);
+          notify.success('录音已开始', '控台录音正在进行');
         });
       }
 
@@ -734,13 +815,37 @@ function ImprovedApp() {
       if (window.electronAPI.consoleRecording.onRecordingStopped) {
         unsubscribeStopped = window.electronAPI.consoleRecording.onRecordingStopped(() => {
           console.log('全局监听：录音已停止');
+          setIsRecordingStarting(false);
           setIsGlobalRecording(false);
-          
-          // 清除计时器
-          if (recordingTimer) {
-            clearInterval(recordingTimer);
-            recordingTimer = null;
+          clearRecordingTimer();
+        });
+      }
+
+      // 监听录音错误事件
+      if (window.electronAPI.consoleRecording.onRecordingError) {
+        unsubscribeError = window.electronAPI.consoleRecording.onRecordingError((error: any) => {
+          console.error('全局监听：录音错误', error);
+          setIsRecordingStarting(false);
+          setIsGlobalRecording(false);
+          clearRecordingTimer();
+          notify.error('录音失败', error?.message || '录音启动或录制过程中发生错误');
+        });
+      }
+
+      // 启动时同步一次主进程状态，避免错过事件后界面不同步
+      if (window.electronAPI.consoleRecording.getStatus) {
+        window.electronAPI.consoleRecording.getStatus().then((status: any) => {
+          if (!status) return;
+          setIsRecordingStarting(Boolean(status.isStarting));
+          if (status.isRecording && status.session) {
+            const startedAt = status.session.startTime ? new Date(status.session.startTime).getTime() : Date.now();
+            const elapsedSeconds = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+            setIsGlobalRecording(true);
+            setGlobalRecordingPath(status.session.outputPath || '');
+            startRecordingTimer(elapsedSeconds);
           }
+        }).catch((error: any) => {
+          console.warn('同步录音状态失败:', error);
         });
       }
     }
@@ -749,7 +854,8 @@ function ImprovedApp() {
       // 清理事件监听和计时器
       if (unsubscribeStarted) unsubscribeStarted();
       if (unsubscribeStopped) unsubscribeStopped();
-      if (recordingTimer) clearInterval(recordingTimer);
+      if (unsubscribeError) unsubscribeError();
+      clearRecordingTimer();
     };
   }, []);
 
@@ -773,6 +879,9 @@ function ImprovedApp() {
         const result = await window.electronAPI.consoleRecording.stop();
         if (!result.success) {
           notify.error('停止录音失败', result.error || '未知错误');
+        } else {
+          setIsRecordingStarting(false);
+          setIsGlobalRecording(false);
         }
         // 移除成功提示，减少打扰
       }
@@ -2926,6 +3035,9 @@ function ImprovedApp() {
 
   // 处理开始录音配置
   const handleStartRecording = (options: any) => {
+    if (isGlobalRecording || isRecordingStarting) {
+      return;
+    }
     setShowRecordingModal(true);
   };
 
@@ -2933,14 +3045,23 @@ function ImprovedApp() {
   const handleRecordingStart = async (options: any) => {
     try {
       setShowRecordingModal(false);
+      if (isGlobalRecording || isRecordingStarting) {
+        notify.warning('录音正在进行', '请先停止当前录音后再开始新的录音');
+        return;
+      }
       if (window.electronAPI?.consoleRecording?.start) {
+        setIsRecordingStarting(true);
+        setGlobalRecordingPath(options.outputPath || '');
         const result = await window.electronAPI.consoleRecording.start(options);
         if (!result.success) {
+          setIsRecordingStarting(false);
           notify.error('录音失败', result.error || '未知错误');
+          return;
         }
-        // 移除录音开始提示，减少打扰
+        setIsRecordingStarting(false);
       }
     } catch (error) {
+      setIsRecordingStarting(false);
       console.error('开始录音失败:', error);
       notify.error('录音失败', '无法开始录音');
     }
@@ -3222,7 +3343,7 @@ function ImprovedApp() {
               </div>
               
               <ImprovedMusicList
-                musicFiles={applySortingToMusicList(getCurrentMusicList())}
+                musicFiles={getCurrentMusicList()}
                 currentMusic={currentMusic}
                 isPlaying={isPlaying}
                 viewMode={viewMode}
@@ -3252,6 +3373,7 @@ function ImprovedApp() {
               <ConsoleRecordingControl 
                 onStartRecording={handleStartRecording}
                 isGlobalRecording={isGlobalRecording}
+                isRecordingStarting={isRecordingStarting}
                 globalRecordingTime={globalRecordingTime}
                 globalRecordingPath={globalRecordingPath}
                 onGlobalStopRecording={handleGlobalStopRecording}
