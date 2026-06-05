@@ -11,9 +11,9 @@
     "build": "vite build",
     "dist": "npm run clean && npm run build && electron-builder",
     "dist:mac": "node scripts/ensure-ffmpeg-mac.js && npm run clean && npm run build && electron-builder --mac && node scripts/build-postprocess.js",
-    "dist:win": "node scripts/ensure-ffmpeg-win.js && npm run clean && npm run build && electron-builder --win",
-    "dist:win-installer": "node scripts/ensure-ffmpeg-win.js && npm run clean && npm run build && ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ electron-builder --win nsis --config.npmRebuild=false",
-    "rebuild:win": "electron-rebuild --platform=win32 --arch=x64 --version=28.3.3",
+    "dist:win": "node scripts/ensure-ffmpeg-win.js && npm run clean && npm run rebuild:win && npm run build && electron-builder --win --x64",
+    "dist:win-installer": "node scripts/ensure-ffmpeg-win.js && npm run clean && npm run rebuild:win && npm run build && ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ electron-builder --win nsis --x64 --config.npmRebuild=false",
+    "rebuild:win": "electron-rebuild -f -w better-sqlite3 -v 28.3.3 -a x64 -m .",
     "postinstall": "electron-builder install-app-deps && electron-rebuild",
     "install:ffmpeg": "sh install-ffmpeg.sh",
     "install:ffmpeg:win": "node scripts/ensure-ffmpeg-win.js",
@@ -230,8 +230,7 @@
         {
           "target": "nsis",
           "arch": [
-            "x64",
-            "arm64"
+            "x64"
           ]
         }
       ],

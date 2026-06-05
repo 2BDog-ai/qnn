@@ -3,7 +3,12 @@ import React, { useState } from 'react';
 interface PlaylistCreateModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onCreate: (name: string, description: string, coverColor: string, coverIcon: string) => void;
+  onCreate: (
+    name: string,
+    description: string,
+    coverColor: string,
+    coverIcon: string
+  ) => Promise<{ success: boolean; error?: string }> | { success: boolean; error?: string };
 }
 
 const coverColors = [
@@ -26,22 +31,40 @@ export const PlaylistCreateModal: React.FC<PlaylistCreateModalProps> = ({
   const [description, setDescription] = useState('');
   const [selectedColor, setSelectedColor] = useState(coverColors[0]);
   const [selectedIcon, setSelectedIcon] = useState(coverIcons[0]);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState('');
 
   if (!isOpen) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (name.trim()) {
-      onCreate(name.trim(), description.trim(), selectedColor, selectedIcon);
-      handleClose();
+    if (!name.trim() || isSubmitting) {
+      return;
+    }
+
+    setIsSubmitting(true);
+    setSubmitError('');
+    try {
+      const result = await onCreate(name.trim(), description.trim(), selectedColor, selectedIcon);
+      if (result.success) {
+        handleClose();
+      } else {
+        setSubmitError(result.error || '创建歌单失败，请重试');
+      }
+    } catch (error) {
+      setSubmitError(error instanceof Error ? error.message : '创建歌单失败，请重试');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
   const handleClose = () => {
+    if (isSubmitting) return;
     setName('');
     setDescription('');
     setSelectedColor(coverColors[0]);
     setSelectedIcon(coverIcons[0]);
+    setSubmitError('');
     onClose();
   };
 
@@ -146,20 +169,27 @@ export const PlaylistCreateModal: React.FC<PlaylistCreateModalProps> = ({
           </div>
 
           {/* 操作按钮 */}
+          {submitError && (
+            <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+              {submitError}
+            </div>
+          )}
+
           <div className="flex space-x-3 pt-4">
             <button
               type="button"
               onClick={handleClose}
-              className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+              disabled={isSubmitting}
+              className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 disabled:opacity-60 transition-colors"
             >
               取消
             </button>
             <button
               type="submit"
-              className="flex-1 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors"
-              disabled={!name.trim()}
+              className="flex-1 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:bg-gray-400 transition-colors"
+              disabled={!name.trim() || isSubmitting}
             >
-              创建歌单
+              {isSubmitting ? '创建中...' : '创建歌单'}
             </button>
           </div>
         </form>

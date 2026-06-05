@@ -2864,7 +2864,12 @@ function ImprovedApp() {
   };
 
   // 播放列表管理
-  const handleCreatePlaylist = async (name: string, description: string, coverColor: string, coverIcon: string) => {
+  const handleCreatePlaylist = async (
+    name: string,
+    description: string,
+    coverColor: string,
+    coverIcon: string
+  ): Promise<{ success: boolean; error?: string }> => {
     try {
       console.log('开始创建播放列表:', name);
       
@@ -2895,10 +2900,12 @@ function ImprovedApp() {
       // 重新加载歌单数据
       const updatedPlaylists = await window.electronAPI.music.playlists.getAll();
       setPlaylists(updatedPlaylists);
+      setActiveView(`playlist-${newPlaylist.id}`);
       
       // 移除创建成功提示，减少打扰
       console.log(`播放列表创建成功: "${name}" (ID: ${newPlaylist.id})`);
       notify.success('创建成功', `播放列表 "${name}" 已创建`);
+      return { success: true };
     } catch (error) {
       console.error('创建歌单失败:', error);
       
@@ -2909,6 +2916,7 @@ function ImprovedApp() {
       }
       
       notify.error('创建失败', errorMessage);
+      return { success: false, error: errorMessage };
     }
   };
 

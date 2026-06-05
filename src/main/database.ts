@@ -278,12 +278,7 @@ export class DatabaseManager {
         console.log('DatabaseManager: display_order 字段已存在');
       }
       
-      try {
-        this.db.exec(`ALTER TABLE music_files ADD COLUMN is_trimmed BOOLEAN DEFAULT 0`);
-        console.log('DatabaseManager: is_trimmed 字段添加成功');
-      } catch (error) {
-        console.log('DatabaseManager: is_trimmed 字段已存在');
-      }
+      this.ensureMusicFilesSchema();
 
       // 创建播放列表音乐关联表
       console.log('DatabaseManager: 创建 playlist_music 关联表...');
@@ -447,6 +442,21 @@ export class DatabaseManager {
 
   // 播放列表操作
   public savePlaylist(playlist: Playlist): void {
+    this.ensurePlaylistSchema();
+    try {
+      this.insertPlaylist(playlist);
+    } catch (error) {
+      if (this.isPlaylistSchemaError(error)) {
+        console.warn('保存歌单时检测到旧数据库结构，重新迁移后再试:', error);
+        this.ensurePlaylistSchema();
+        this.insertPlaylist(playlist);
+        return;
+      }
+      throw error;
+    }
+  }
+
+  private insertPlaylist(playlist: Playlist): void {
     const stmt = this.db.prepare(`
       INSERT OR REPLACE INTO playlists (
         id, name, description, created_time, updated_time, is_default,
@@ -459,8 +469,8 @@ export class DatabaseManager {
       playlist.id,
       playlist.name,
       playlist.description || null,
-      playlist.createdTime.toISOString(),
-      playlist.updatedTime.toISOString(),
+      this.toIsoString(playlist.createdTime),
+      this.toIsoString(playlist.updatedTime),
       playlist.isDefault ? 1 : 0,
       playlist.sortOrder,
       playlist.coverColor || null,
@@ -472,6 +482,116 @@ export class DatabaseManager {
       playlist.manualOrder ? JSON.stringify(playlist.manualOrder) : null,
       playlist.displayOrder || 0
     );
+  }
+
+  private ensurePlaylistSchema(): void {
+    const columns = new Set(
+      (this.db.prepare(`PRAGMA table_info(playlists)`).all() as any[])
+        .map(column => column.name)
+    );
+
+    const addColumn = (name: string, definition: string) => {
+      if (columns.has(name)) return;
+      this.db.exec(`ALTER TABLE playlists ADD COLUMN ${definition}`);
+      columns.add(name);
+      console.log(`DatabaseManager: playlists.${name} 字段已补齐`);
+    };
+
+    addColumn('sort_by', `sort_by TEXT DEFAULT 'addedTime'`);
+    addColumn('sort_direction', `sort_direction TEXT DEFAULT 'desc'`);
+    addColumn('manual_order', 'manual_order TEXT');
+    addColumn('display_order', 'display_order INTEGER DEFAULT 0');
+  }
+
+  private ensureMusicFilesSchema(): void {
+    const columns = new Set(
+      (this.db.prepare(`PRAGMA table_info(music_files)`).all() as any[])
+        .map(column => column.name)
+    );
+
+    const addColumn = (name: string, definition: string) => {
+      if (columns.has(name)) return;
+      this.db.exec(`ALTER TABLE music_files ADD COLUMN ${definition}`);
+      columns.add(name);
+      console.log(`DatabaseManager: music_files.${name} 字段已补齐`);
+    };
+
+    addColumn('name', 'name TEXT');
+    addColumn('artist', 'artist TEXT');
+    addColumn('album', 'album TEXT');
+    addColumn('duration', 'duration REAL DEFAULT 0');
+    addColumn('file_size', 'file_size INTEGER DEFAULT 0');
+    addColumn('format', 'format TEXT');
+    addColumn('is_favorite', 'is_favorite BOOLEAN DEFAULT 0');
+    addColumn('add_time', 'add_time TEXT');
+    addColumn('file_path', 'file_path TEXT');
+    addColumn('file_name', 'file_name TEXT');
+    addColumn('display_name', 'display_name TEXT');
+    addColumn('bitrate', 'bitrate INTEGER DEFAULT 0');
+    addColumn('sample_rate', 'sample_rate INTEGER DEFAULT 0');
+    addColumn('last_play_time', 'last_play_time TEXT');
+    addColumn('play_count', 'play_count INTEGER DEFAULT 0');
+    addColumn('custom_tags', 'custom_tags TEXT');
+    addColumn('thumbnail_path', 'thumbnail_path TEXT');
+    addColumn('is_trimmed', 'is_trimmed BOOLEAN DEFAULT 0');
+
+    const now = new Date().toISOString();
+    if (columns.has('added_time')) {
+      this.db.prepare(`
+        UPDATE music_files
+        SET add_time = COALESCE(NULLIF(add_time, ''), NULLIF(added_time, ''), ?)
+        WHERE add_time IS NULL OR add_time = ''
+      `).run(now);
+    } else {
+      this.db.prepare(`
+        UPDATE music_files
+        SET add_time = COALESCE(NULLIF(add_time, ''), ?)
+        WHERE add_time IS NULL OR add_time = ''
+      `).run(now);
+    }
+
+    this.db.exec(`
+      UPDATE music_files
+      SET name = COALESCE(NULLIF(name, ''), NULLIF(display_name, ''), NULLIF(file_name, ''), id)
+      WHERE name IS NULL OR name = '';
+
+      UPDATE music_files
+      SET display_name = COALESCE(NULLIF(display_name, ''), NULLIF(name, ''), NULLIF(file_name, ''), id)
+      WHERE display_name IS NULL OR display_name = '';
+
+      UPDATE music_files
+      SET file_name = COALESCE(NULLIF(file_name, ''), NULLIF(display_name, ''), NULLIF(name, ''), id)
+      WHERE file_name IS NULL OR file_name = '';
+
+      UPDATE music_files SET duration = 0 WHERE duration IS NULL;
+      UPDATE music_files SET file_size = 0 WHERE file_size IS NULL;
+      UPDATE music_files SET bitrate = 0 WHERE bitrate IS NULL;
+      UPDATE music_files SET sample_rate = 0 WHERE sample_rate IS NULL;
+      UPDATE music_files SET play_count = 0 WHERE play_count IS NULL;
+      UPDATE music_files SET is_favorite = 0 WHERE is_favorite IS NULL;
+      UPDATE music_files SET is_trimmed = 0 WHERE is_trimmed IS NULL;
+      UPDATE music_files SET custom_tags = '[]' WHERE custom_tags IS NULL OR custom_tags = '';
+    `);
+  }
+
+  private isPlaylistSchemaError(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : String(error);
+    return /no such column|table playlists has no column|SQLITE_ERROR/i.test(message);
+  }
+
+  private toIsoString(value: unknown): string {
+    if (value instanceof Date && !Number.isNaN(value.getTime())) {
+      return value.toISOString();
+    }
+
+    if (typeof value === 'string' || typeof value === 'number') {
+      const parsed = new Date(value);
+      if (!Number.isNaN(parsed.getTime())) {
+        return parsed.toISOString();
+      }
+    }
+
+    return new Date().toISOString();
   }
 
   public getAllPlaylists(): Playlist[] {
@@ -750,6 +870,7 @@ export class DatabaseManager {
   }
 
   private camelToSnakeCase(str: string): string {
+    if (str === 'addedTime') return 'add_time';
     return str.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`);
   }
 

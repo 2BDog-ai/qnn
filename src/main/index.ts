@@ -41,6 +41,42 @@ let musicDecryptor: MusicDecryptor | null = null;
 let dataManager: DataManager | null = null;
 let ipcHandlersRegistered = false; // 防止重复注册IPC处理器
 
+function getDataManager(): DataManager {
+  if (!dataManager) {
+    dataManager = DataManager.getInstance();
+  }
+  return dataManager;
+}
+
+function createPlaylistFromIpcPayload(playlist: any) {
+  try {
+    const dm = getDataManager();
+    const created = dm.createPlaylist(playlist || {});
+    if (!created || !created.id) {
+      throw new Error('歌单创建失败：创建结果无效');
+    }
+
+    try {
+      dm.setCurrentPlaylist(created.id);
+    } catch (error) {
+      console.warn('设置当前歌单失败:', error);
+    }
+
+    try {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('playlist:created', created);
+      }
+    } catch (error) {
+      console.warn('发送歌单创建事件失败:', error);
+    }
+
+    return created;
+  } catch (error) {
+    console.error('playlist:create 失败:', error);
+    throw error instanceof Error ? error : new Error(String(error));
+  }
+}
+
 const safeIpcHandle = (channel: string, listener: (...args: any[]) => any) => {
   try {
     ipcMain.removeHandler(channel);
@@ -174,7 +210,7 @@ function registerDataManagerIPC() {
   // 播放列表操作
   safeIpcHandle('playlist:getAll', () => dataManager!.getAllPlaylists());
   safeIpcHandle('playlist:get', (_, id: string) => dataManager!.getPlaylist(id));
-  safeIpcHandle('playlist:create', (_, playlist: any) => dataManager!.createPlaylist(playlist));
+  safeIpcHandle('playlist:create', (_, playlist: any) => createPlaylistFromIpcPayload(playlist));
   safeIpcHandle('playlist:update', (_, id: string, updates: any) => dataManager!.updatePlaylist(id, updates));
   safeIpcHandle('playlist:delete', (_, id: string) => dataManager!.deletePlaylist(id));
 
@@ -1365,20 +1401,7 @@ safeIpcHandle('playlist:get', (_e, id: string) => {
 });
 
 safeIpcHandle('playlist:create', (_e, playlist: any) => {
-  try {
-    const dm = DataManager.getInstance();
-    const name = (playlist?.name || '').toString().trim() || `新建歌单 ${new Date().toLocaleString()}`;
-    const payload = { ...playlist, name };
-    const created = dm.createPlaylist(payload);
-    // 设为当前歌单
-    try { dm.setCurrentPlaylist(created.id); } catch {}
-    // 通知渲染进程刷新
-    try { if (mainWindow && !mainWindow.isDestroyed()) { mainWindow.webContents.send('playlist:created', created); } } catch {}
-    return created;
-  } catch (e) {
-    console.error('fallback playlist:create 失败:', e);
-    return null;
-  }
+  return createPlaylistFromIpcPayload(playlist);
 });
 
 safeIpcHandle('playlist:update', (_e, id: string, updates: any) => {

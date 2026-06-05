@@ -343,7 +343,13 @@ export class DataManager extends EventEmitter {
   }
 
   public createPlaylist(data: Omit<Playlist, 'id' | 'createdTime' | 'updatedTime'>): Playlist {
-    console.log('🎵 DataManager: 开始创建歌单:', data.name);
+    const raw = data as Partial<Playlist> & Record<string, any>;
+    const name = (raw.name || '').toString().trim();
+    if (!name) {
+      throw new Error('歌单名称不能为空');
+    }
+
+    console.log('🎵 DataManager: 开始创建歌单:', name);
     
     // Windows平台调试信息
     if (process.platform === 'win32') {
@@ -353,15 +359,31 @@ export class DataManager extends EventEmitter {
     }
     
     const now = new Date();
+    const audioFiles = Array.isArray(raw.audioFiles)
+      ? Array.from(new Set(raw.audioFiles.filter((id): id is string => typeof id === 'string' && id.trim().length > 0)))
+      : [];
+    const manualOrder = Array.isArray(raw.manualOrder)
+      ? Array.from(new Set(raw.manualOrder.filter((id): id is string => typeof id === 'string' && id.trim().length > 0)))
+      : undefined;
     const playlist: Playlist = {
       id: uuidv4(),
       createdTime: now,
       updatedTime: now,
-      ...data,
-      audioFiles: data.audioFiles || [],
-      sortOrder: data.sortOrder || 'added_time_desc',
-      songCount: data.audioFiles?.length || 0,
-      totalDuration: 0
+      name,
+      description: typeof raw.description === 'string' ? raw.description.trim() : '',
+      audioFiles,
+      isDefault: Boolean(raw.isDefault),
+      sortOrder: raw.sortOrder || 'added_time_desc' as any,
+      coverColor: typeof raw.coverColor === 'string' ? raw.coverColor : undefined,
+      coverIcon: typeof raw.coverIcon === 'string' ? raw.coverIcon : undefined,
+      songCount: audioFiles.length,
+      totalDuration: typeof raw.totalDuration === 'number' && Number.isFinite(raw.totalDuration) ? raw.totalDuration : 0,
+      sortBy: raw.sortBy || 'addedTime',
+      sortDirection: raw.sortDirection || 'desc',
+      manualOrder,
+      displayOrder: typeof raw.displayOrder === 'number' && Number.isFinite(raw.displayOrder)
+        ? raw.displayOrder
+        : this.getNextPlaylistDisplayOrder()
     };
     
     console.log('🎵 歌单数据准备完成:', playlist.id);
@@ -376,8 +398,17 @@ export class DataManager extends EventEmitter {
       return playlist;
     } catch (dbError) {
       console.error('❌ 数据库保存失败:', dbError);
-      throw dbError;
+      const detail = dbError instanceof Error ? dbError.message : String(dbError);
+      throw new Error(`保存歌单到数据库失败: ${detail}`);
     }
+  }
+
+  private getNextPlaylistDisplayOrder(): number {
+    if (this.playlists.size === 0) return 0;
+    const orders = Array.from(this.playlists.values())
+      .map(playlist => playlist.displayOrder)
+      .filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
+    return orders.length > 0 ? Math.max(...orders) + 1 : this.playlists.size;
   }
 
   public updatePlaylist(id: string, updates: Partial<Playlist>): void {
