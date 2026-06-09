@@ -112,7 +112,6 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
   const activeScrollTargetRef = useRef<HTMLElement | null>(null);
   const listDragSourceIdRef = useRef<string | null>(null);
   const listRawInsertIndexRef = useRef<number | null>(null);
-  const gridDragSourceIndexRef = useRef<number | null>(null);
   const gridDragSourceIdRef = useRef<string | null>(null);
   const [gridDraggingId, setGridDraggingId] = useState<string | null>(null);
   const [gridInsertIndex, setGridInsertIndex] = useState<number | null>(null);
@@ -361,51 +360,12 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
     }
   };
 
-  const cleanupGridDrag = () => {
+  const cleanupGridDnd = () => {
     document.body.style.userSelect = '';
     stopSortingAutoScroll();
-    gridDragSourceIndexRef.current = null;
     gridDragSourceIdRef.current = null;
     setGridDraggingId(null);
     setGridInsertTargetIndex(null);
-  };
-
-  const commitGridReorder = () => {
-    const sourceId = gridDragSourceIdRef.current;
-    const fallbackSourceIndex = gridDragSourceIndexRef.current;
-    const sourceIndex = sourceId
-      ? sortedMusicFiles.findIndex((music) => music.id === sourceId)
-      : fallbackSourceIndex;
-    const rawDestinationIndex = dragInsertIndexRef.current;
-
-    if (sourceIndex === null || sourceIndex < 0 || rawDestinationIndex === null) {
-      return;
-    }
-
-    const reordered = Array.from(sortedMusicFiles);
-    const [removed] = reordered.splice(sourceIndex, 1);
-    let destinationIndex = rawDestinationIndex;
-    if (destinationIndex > sourceIndex) destinationIndex -= 1;
-    destinationIndex = Math.max(0, Math.min(destinationIndex, reordered.length));
-
-    if (removed && destinationIndex !== sourceIndex) {
-      reordered.splice(destinationIndex, 0, removed);
-      if (onReorder) void onReorder(reordered.map(m => m.id));
-    }
-  };
-
-  const handleGridDragStart = (event: React.DragEvent<HTMLDivElement>, music: MusicFile, index: number) => {
-    event.stopPropagation();
-    gridDragSourceIndexRef.current = index;
-    gridDragSourceIdRef.current = music.id;
-    setGridDraggingId(music.id);
-    setGridInsertTargetIndex(index);
-    dragPointerRef.current = { x: event.clientX, y: event.clientY };
-    document.body.style.userSelect = 'none';
-    event.dataTransfer.effectAllowed = 'move';
-    event.dataTransfer.setData('application/x-wedding-music-id', music.id);
-    event.dataTransfer.setData('text/plain', music.id);
-    startSortingAutoScroll(music.id);
   };
 
   const getGridInsertionIndex = (clientX: number, clientY: number) => {
@@ -481,45 +441,41 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
     return sortedMusicFiles.length;
   };
 
-  const hasActiveGridDrag = () => gridDragSourceIdRef.current !== null;
-
-  const handleGridItemDragOver = (event: React.DragEvent<HTMLElement>) => {
-    if (!hasActiveGridDrag()) return;
-    event.preventDefault();
-    event.stopPropagation();
-    event.dataTransfer.dropEffect = 'move';
-    dragPointerRef.current = { x: event.clientX, y: event.clientY };
-    setGridInsertTargetIndex(getGridInsertionIndex(event.clientX, event.clientY));
-  };
-
-  const handleGridDrag = (event: React.DragEvent<HTMLDivElement>) => {
-    if (!hasActiveGridDrag() || event.clientX === 0 && event.clientY === 0) return;
-    dragPointerRef.current = { x: event.clientX, y: event.clientY };
-    setGridInsertTargetIndex(getGridInsertionIndex(event.clientX, event.clientY));
-  };
-
-  const handleGridContainerDragOver = (event: React.DragEvent<HTMLDivElement>) => {
-    if (!hasActiveGridDrag()) return;
-    event.preventDefault();
-    event.stopPropagation();
-    event.dataTransfer.dropEffect = 'move';
-    dragPointerRef.current = { x: event.clientX, y: event.clientY };
-    setGridInsertTargetIndex(getGridInsertionIndex(event.clientX, event.clientY));
-  };
-
-  const handleGridDrop = (event: React.DragEvent<HTMLDivElement>) => {
-    if (!hasActiveGridDrag()) return;
-    event.preventDefault();
-    event.stopPropagation();
-    commitGridReorder();
-    cleanupGridDrag();
-  };
-
-  const handleGridDragEnd = () => {
-    if (hasActiveGridDrag()) {
-      commitGridReorder();
+  const handleGridDragUpdate = (update: DragUpdate) => {
+    if (dragPointerRef.current) {
+      setGridInsertTargetIndex(getGridInsertionIndex(dragPointerRef.current.x, dragPointerRef.current.y));
+      return;
     }
-    cleanupGridDrag();
+
+    if (update.destination) {
+      setGridInsertTargetIndex(update.destination.index);
+    }
+  };
+
+  const handleGridDndEnd = (result: DropResult) => {
+    const rawDestinationIndex = dragInsertIndexRef.current ?? result.destination?.index ?? null;
+    const sourceIndex = sortedMusicFiles.findIndex((music) => music.id === result.draggableId);
+
+    cleanupGridDnd();
+
+    if (sourceIndex < 0 || rawDestinationIndex === null) {
+      return;
+    }
+
+    const reordered = Array.from(sortedMusicFiles);
+    const [removed] = reordered.splice(sourceIndex, 1);
+    let destinationIndex = rawDestinationIndex;
+
+    if (destinationIndex > sourceIndex) {
+      destinationIndex -= 1;
+    }
+
+    destinationIndex = Math.max(0, Math.min(destinationIndex, reordered.length));
+
+    if (removed && destinationIndex !== sourceIndex) {
+      reordered.splice(destinationIndex, 0, removed);
+      if (onReorder) void onReorder(reordered.map(m => m.id));
+    }
   };
 
   const isFileDragEvent = (event: React.DragEvent) => {
@@ -685,47 +641,71 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
             </div>
           </div>
         ) : (
-          <div
-            id="music-grid-container"
-            className="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-7 gap-3 relative"
-            onDragOver={handleGridContainerDragOver}
-            onDrop={handleGridDrop}
+          <DragDropContext
+            autoScrollerOptions={{
+              startFromPercentage: 0.12,
+              maxScrollAtPercentage: 0.02,
+              maxPixelScroll: 24
+            }}
+            onDragStart={(start) => {
+              document.body.style.userSelect = 'none';
+              gridDragSourceIdRef.current = start.draggableId;
+              setGridDraggingId(start.draggableId);
+              setGridInsertTargetIndex(start.source.index);
+              startSortingAutoScroll(start.draggableId);
+            }}
+            onDragUpdate={handleGridDragUpdate}
+            onDragEnd={handleGridDndEnd}
           >
-            {sortedMusicFiles.map((music, index) => (
-              <React.Fragment key={music.id}>
-                {gridDraggingId && gridInsertIndex === index && (
-                  <div className="rounded-xl border-2 border-dashed border-blue-500 bg-blue-50/70 min-h-[118px]" />
-                )}
-                <div className="relative">
+            <Droppable droppableId="music-grid" direction="horizontal">
+              {(provided, snapshot) => (
+                <div
+                  id="music-grid-container"
+                  ref={provided.innerRef}
+                  {...provided.droppableProps}
+                  className={`flex flex-wrap gap-3 relative ${
+                    snapshot.isDraggingOver ? 'bg-blue-50/30 rounded-xl' : ''
+                  }`}
+                >
+                  {sortedMusicFiles.map((music, index) => (
+                    <Draggable key={music.id} draggableId={music.id} index={index}>
+                      {(dragProvided, dragSnapshot) => (
                         <div
-                          id={`music-item-${music.id}`}
-                          draggable
-                          onDragStart={(event) => handleGridDragStart(event, music, index)}
-                          onDrag={handleGridDrag}
-                          data-grid-sort-item="true"
-                          data-grid-index={index}
-                          data-grid-id={music.id}
-                          onDragOver={handleGridItemDragOver}
-                          onDragEnter={handleGridItemDragOver}
-                          onDrop={handleGridDrop}
-                          onDragEnd={handleGridDragEnd}
-                          className={`group relative rounded-xl cursor-grab active:cursor-grabbing ${
+                          ref={dragProvided.innerRef}
+                          {...dragProvided.draggableProps}
+                          {...dragProvided.dragHandleProps}
+                          className="relative w-[31%] md:w-[23%] lg:w-[15%] xl:w-[13%] min-w-0"
+                          style={dragProvided.draggableProps.style}
+                        >
+                          {gridDraggingId && gridInsertIndex === index && !dragSnapshot.isDragging && (
+                            <div className="absolute inset-x-0 -top-1 h-1 rounded-full bg-blue-500 shadow-sm" />
+                          )}
+                          <div
+                            id={`music-item-${music.id}`}
+                            data-grid-sort-item="true"
+                            data-grid-index={index}
+                            data-grid-id={music.id}
+                            className={`group relative rounded-xl cursor-grab active:cursor-grabbing select-none ${
                             selectedIds.has(music.id) ? 'ring-2 ring-blue-500' : ''
                           } ${
-                            music.isPlaying && isPlaying 
-                              ? 'bg-gradient-to-br from-green-50 to-emerald-50 ring-4 ring-green-400 shadow-2xl shadow-green-300/60 transform hover:scale-105' 
-                              : currentMusic?.id === music.id 
-                                ? 'bg-gradient-to-br from-purple-50 to-blue-50 ring-2 ring-purple-500' 
+                            music.isPlaying && isPlaying
+                              ? 'bg-gradient-to-br from-green-50 to-emerald-50 ring-4 ring-green-400 shadow-2xl shadow-green-300/60 transform hover:scale-105'
+                              : currentMusic?.id === music.id
+                                ? 'bg-gradient-to-br from-purple-50 to-blue-50 ring-2 ring-purple-500'
                                 : 'bg-white'
                           } ${
-                            highlightedId === music.id 
-                              ? 'ring-2 ring-yellow-400 bg-yellow-50' 
+                            highlightedId === music.id
+                              ? 'ring-2 ring-yellow-400 bg-yellow-50'
                               : ''
                           } ${
-                              gridDraggingId === music.id 
-                                ? 'opacity-45 ring-2 ring-blue-300' 
+                              dragSnapshot.isDragging
+                                ? 'bg-white ring-2 ring-blue-300 shadow-2xl'
                                 : ''
                           }`}
+                          style={{
+                            boxShadow: dragSnapshot.isDragging ? '0 16px 32px rgba(15, 23, 42, 0.22)' : undefined,
+                            zIndex: dragSnapshot.isDragging ? 1000 : undefined
+                          }}
                           onClick={(e) => handleSelect(music.id, e)}
                           onDoubleClick={(event) => {
                             event.preventDefault();
@@ -913,14 +893,18 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
                             </div>
                           </div>
                         </div>
-                    </div>
-              </React.Fragment>
+                      </div>
+                      )}
+                    </Draggable>
                   ))}
-            {gridDraggingId && gridInsertIndex === sortedMusicFiles.length && (
-              <div className="rounded-xl border-2 border-dashed border-blue-500 bg-blue-50/70 min-h-[118px]" />
-            )}
-                  
-          </div>
+                  {gridDraggingId && gridInsertIndex === sortedMusicFiles.length && (
+                    <div className="w-full h-1 rounded-full bg-blue-500 shadow-sm" />
+                  )}
+                  {provided.placeholder}
+                </div>
+              )}
+            </Droppable>
+          </DragDropContext>
         )}
       </div>
     );
