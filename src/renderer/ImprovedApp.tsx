@@ -220,6 +220,7 @@ function ImprovedApp() {
           }
         } catch (error) {
           console.error('保存播放列表排序状态失败:', error);
+          throw error;
         }
       }
     } else {
@@ -280,11 +281,13 @@ function ImprovedApp() {
             }
           } catch (dbError) {
             console.error('❌ 保存手动排序到数据库失败:', dbError);
+            throw dbError;
           }
         }
         
       } catch (error) {
         console.warn('无法保存全局排序偏好:', error);
+        throw error;
       }
     }
   };

@@ -113,8 +113,19 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
   const listDragSourceIdRef = useRef<string | null>(null);
   const listRawInsertIndexRef = useRef<number | null>(null);
   const gridDragSourceIdRef = useRef<string | null>(null);
+  const gridDragSourceIndexRef = useRef<number | null>(null);
+  const gridDragStartedRef = useRef(false);
+  const gridPointerIdRef = useRef<number | null>(null);
+  const gridPendingPointerRef = useRef<{ x: number; y: number; id: string; index: number } | null>(null);
   const [gridDraggingId, setGridDraggingId] = useState<string | null>(null);
   const [gridInsertIndex, setGridInsertIndex] = useState<number | null>(null);
+  const [gridDragPreview, setGridDragPreview] = useState<{
+    id: string;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  } | null>(null);
 
   const findScrollableParent = (element: Element | null): HTMLElement | null => {
     let current = element instanceof HTMLElement ? element : element?.parentElement || null;
@@ -360,12 +371,17 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
     }
   };
 
-  const cleanupGridDnd = () => {
+  const cleanupGridPointerDrag = () => {
     document.body.style.userSelect = '';
     stopSortingAutoScroll();
+    gridPointerIdRef.current = null;
+    gridPendingPointerRef.current = null;
+    gridDragStartedRef.current = false;
+    gridDragSourceIndexRef.current = null;
     gridDragSourceIdRef.current = null;
     setGridDraggingId(null);
     setGridInsertTargetIndex(null);
+    setGridDragPreview(null);
   };
 
   const getGridInsertionIndex = (clientX: number, clientY: number) => {
@@ -441,24 +457,16 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
     return sortedMusicFiles.length;
   };
 
-  const handleGridDragUpdate = (update: DragUpdate) => {
-    if (dragPointerRef.current) {
-      setGridInsertTargetIndex(getGridInsertionIndex(dragPointerRef.current.x, dragPointerRef.current.y));
-      return;
-    }
+  const commitGridPointerReorder = () => {
+    const sourceId = gridDragSourceIdRef.current;
+    const sourceIndex = sourceId
+      ? sortedMusicFiles.findIndex((music) => music.id === sourceId)
+      : gridDragSourceIndexRef.current;
+    const rawDestinationIndex = dragInsertIndexRef.current;
 
-    if (update.destination) {
-      setGridInsertTargetIndex(update.destination.index);
-    }
-  };
+    cleanupGridPointerDrag();
 
-  const handleGridDndEnd = (result: DropResult) => {
-    const rawDestinationIndex = dragInsertIndexRef.current ?? result.destination?.index ?? null;
-    const sourceIndex = sortedMusicFiles.findIndex((music) => music.id === result.draggableId);
-
-    cleanupGridDnd();
-
-    if (sourceIndex < 0 || rawDestinationIndex === null) {
+    if (sourceIndex === null || sourceIndex < 0 || rawDestinationIndex === null) {
       return;
     }
 
@@ -476,6 +484,91 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
       reordered.splice(destinationIndex, 0, removed);
       if (onReorder) void onReorder(reordered.map(m => m.id));
     }
+  };
+
+  const beginGridPointerDrag = (event: React.PointerEvent<HTMLDivElement>, music: MusicFile, index: number) => {
+    if (event.button !== 0) return;
+    const target = event.target as HTMLElement | null;
+    if (target?.closest('button, input, textarea, select, [data-no-grid-drag="true"]')) return;
+
+    gridPendingPointerRef.current = {
+      x: event.clientX,
+      y: event.clientY,
+      id: music.id,
+      index
+    };
+    gridPointerIdRef.current = event.pointerId;
+    gridDragSourceIdRef.current = music.id;
+    gridDragSourceIndexRef.current = index;
+    setGridInsertTargetIndex(index);
+
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // Pointer capture is best-effort in older Chromium/Electron builds.
+    }
+  };
+
+  const updateGridPointerDrag = (event: React.PointerEvent<HTMLDivElement>, music: MusicFile) => {
+    if (gridPointerIdRef.current !== event.pointerId || gridDragSourceIdRef.current !== music.id) return;
+
+    const pending = gridPendingPointerRef.current;
+    if (!pending) return;
+
+    const deltaX = event.clientX - pending.x;
+    const deltaY = event.clientY - pending.y;
+    const movedEnough = Math.hypot(deltaX, deltaY) >= 4;
+
+    if (!gridDragStartedRef.current && movedEnough) {
+      const rect = event.currentTarget.getBoundingClientRect();
+      gridDragStartedRef.current = true;
+      document.body.style.userSelect = 'none';
+      setGridDraggingId(music.id);
+      setGridDragPreview({
+        id: music.id,
+        x: event.clientX,
+        y: event.clientY,
+        width: rect.width,
+        height: rect.height
+      });
+      dragPointerRef.current = { x: event.clientX, y: event.clientY };
+      startSortingAutoScroll(music.id);
+    }
+
+    if (!gridDragStartedRef.current) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    dragPointerRef.current = { x: event.clientX, y: event.clientY };
+    setGridDragPreview((current) => current ? {
+      ...current,
+      x: event.clientX,
+      y: event.clientY
+    } : current);
+    setGridInsertTargetIndex(getGridInsertionIndex(event.clientX, event.clientY));
+  };
+
+  const endGridPointerDrag = (event: React.PointerEvent<HTMLDivElement>, music: MusicFile) => {
+    if (gridPointerIdRef.current !== event.pointerId || gridDragSourceIdRef.current !== music.id) return;
+
+    try {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    } catch {
+      // Pointer capture may already be released.
+    }
+
+    if (gridDragStartedRef.current) {
+      event.preventDefault();
+      event.stopPropagation();
+      commitGridPointerReorder();
+    } else {
+      cleanupGridPointerDrag();
+    }
+  };
+
+  const cancelGridPointerDrag = (event: React.PointerEvent<HTMLDivElement>, music: MusicFile) => {
+    if (gridPointerIdRef.current !== event.pointerId || gridDragSourceIdRef.current !== music.id) return;
+    cleanupGridPointerDrag();
   };
 
   const isFileDragEvent = (event: React.DragEvent) => {
@@ -590,6 +683,212 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
     }
   };
 
+  const renderGridCard = (music: MusicFile, isDragging = false) => (
+    <div
+      id={isDragging ? undefined : `music-item-${music.id}`}
+      className={`group relative rounded-xl select-none bg-white ${
+        isDragging ? 'ring-2 ring-blue-300 shadow-2xl' : 'cursor-grab active:cursor-grabbing'
+      } ${
+        selectedIds.has(music.id) ? 'ring-2 ring-blue-500' : ''
+      } ${
+        music.isPlaying && isPlaying
+          ? 'bg-gradient-to-br from-green-50 to-emerald-50 ring-4 ring-green-400 shadow-2xl shadow-green-300/60 transform hover:scale-105'
+          : currentMusic?.id === music.id
+            ? 'bg-gradient-to-br from-purple-50 to-blue-50 ring-2 ring-purple-500'
+            : ''
+      } ${
+        highlightedId === music.id ? 'ring-2 ring-yellow-400 bg-yellow-50' : ''
+      }`}
+      style={{
+        boxShadow: isDragging ? '0 16px 32px rgba(15, 23, 42, 0.22)' : undefined
+      }}
+      onClick={(e) => {
+        if (gridDragStartedRef.current) return;
+        handleSelect(music.id, e);
+      }}
+      onDoubleClick={(event) => {
+        if (gridDragStartedRef.current) return;
+        event.preventDefault();
+        event.stopPropagation();
+        onPlayMusic(music, { restartSame: true });
+      }}
+    >
+      <div className={`aspect-[16/9] relative overflow-hidden rounded-t-xl ${
+        music.isPlaying && isPlaying ? 'bg-gradient-to-br from-green-400 via-emerald-500 to-teal-500' : 'bg-gradient-to-br from-blue-400 via-purple-500 to-pink-500'
+      }`}>
+        <div className="absolute inset-0 flex items-center justify-center">
+          {music.isPlaying && isPlaying ? (
+            <div className="flex items-center justify-center">
+              <div className="flex space-x-1">
+                <div className="w-1 h-6 bg-white rounded-full animate-pulse"></div>
+                <div className="w-1 h-8 bg-white rounded-full animate-pulse delay-75"></div>
+                <div className="w-1 h-6 bg-white rounded-full animate-pulse delay-150"></div>
+                <div className="w-1 h-8 bg-white rounded-full animate-pulse delay-300"></div>
+              </div>
+            </div>
+          ) : (
+            <MusicNoteIcon className="w-8 h-8 text-white/50" />
+          )}
+        </div>
+
+        {music.isPlaying && isPlaying && (
+          <div className="absolute top-2 left-2 bg-green-500 text-white text-xs px-2 py-1 rounded-full font-medium animate-pulse shadow-lg">
+            正在播放
+          </div>
+        )}
+
+        {music.isPlaying && isPlaying && (
+          <div className="absolute inset-0 rounded-xl border-2 border-green-400 animate-ping opacity-75"></div>
+        )}
+
+        <div
+          className={`absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-all duration-200 pointer-events-none ${
+            music.isPlaying && isPlaying ? 'bg-black/20' : ''
+          }`}
+        />
+
+        <button
+          data-no-grid-drag="true"
+          onClick={(e) => {
+            e.stopPropagation();
+            onPlayMusic(music);
+          }}
+          className={`absolute left-1/2 top-1/2 w-12 h-12 -translate-x-1/2 -translate-y-1/2 rounded-full bg-black/30 hover:bg-black/50 flex items-center justify-center transition-all duration-200 ${
+            music.isPlaying && isPlaying ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+          }`}
+        >
+          {music.isPlaying && isPlaying ? (
+            <PauseIcon className="w-10 h-10 text-white drop-shadow-lg p-2" />
+          ) : (
+            <PlayIcon className="w-8 h-8 text-white drop-shadow-lg" />
+          )}
+        </button>
+
+        {!isDragging && (
+          <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+            <button
+              data-no-grid-drag="true"
+              onClick={(e) => {
+                e.stopPropagation();
+                setContextMenuId(contextMenuId === music.id ? null : music.id);
+              }}
+              className="w-6 h-6 bg-blue-500 hover:bg-blue-600 rounded-full flex items-center justify-center text-white shadow-lg"
+              title="更多操作"
+            >
+              <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/>
+              </svg>
+            </button>
+          </div>
+        )}
+      </div>
+
+      {contextMenuId === music.id && !isDragging && (
+        <>
+          <div
+            className="fixed inset-0 z-[9998]"
+            onClick={(e) => {
+              e.stopPropagation();
+              setContextMenuId(null);
+            }}
+          />
+
+          <div
+            data-no-grid-drag="true"
+            className="fixed bg-white dark:bg-slate-800 rounded-lg shadow-2xl border-2 border-blue-500 py-2 z-[9999] min-w-[180px]"
+            style={{
+              top: '50%',
+              left: '50%',
+              transform: 'translate(-50%, -50%)'
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-4 py-2 border-b border-gray-200 dark:border-slate-700">
+              <p className="text-xs font-semibold text-gray-500 dark:text-gray-400">操作菜单</p>
+            </div>
+
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setEditingId(music.id);
+                setEditingName(music.name);
+                setContextMenuId(null);
+              }}
+              className="w-full px-4 py-3 text-left text-sm text-gray-700 dark:text-gray-200 hover:bg-blue-50 dark:hover:bg-slate-700 flex items-center space-x-3 transition-colors"
+            >
+              <EditIcon className="w-5 h-5 text-blue-500" />
+              <span className="font-medium">重命名</span>
+            </button>
+
+            {onAddToPlaylist && playlists.length > 0 && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setSelectedMusicForPlaylist(music);
+                  setShowAddToPlaylistModal(true);
+                  setContextMenuId(null);
+                }}
+                className="w-full px-4 py-3 text-left text-sm text-gray-700 dark:text-gray-200 hover:bg-blue-50 dark:hover:bg-slate-700 flex items-center space-x-3 transition-colors"
+              >
+                <PlusIcon className="w-5 h-5 text-green-500" />
+                <span className="font-medium">添加到歌单</span>
+              </button>
+            )}
+
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setContextMenuId(null);
+                setTimeout(() => {
+                  const targetHash = buildAudioEditorHash(music.id, currentPlaylistId);
+                  window.location.hash = targetHash;
+                }, 100);
+              }}
+              className="w-full px-4 py-3 text-left text-sm text-gray-700 dark:text-gray-200 hover:bg-blue-50 dark:hover:bg-slate-700 flex items-center space-x-3 transition-colors"
+            >
+              <svg className="w-5 h-5 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+              </svg>
+              <span className="font-medium">剪辑音乐</span>
+            </button>
+
+            <hr className="my-2 border-gray-200 dark:border-slate-700" />
+
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onDeleteMusic(music.id);
+                setContextMenuId(null);
+              }}
+              className="w-full px-4 py-3 text-left text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center space-x-3 transition-colors"
+            >
+              <DeleteIcon className="w-5 h-5" />
+              <span className="font-medium">删除</span>
+            </button>
+          </div>
+        </>
+      )}
+
+      <div className="p-2">
+        <div className="flex items-center justify-between mb-0.5">
+          <h4 className="font-medium text-gray-900 truncate text-sm flex-1">
+            {music.name}
+          </h4>
+          {music.isTrimmed && (
+            <TrimmedIcon className="w-3 h-3 text-orange-500 ml-1 flex-shrink-0" title="已剪辑" />
+          )}
+        </div>
+        <p className="text-xs text-gray-500 truncate">
+          {music.artist || '未知歌手'}
+        </p>
+        <div className="flex items-center justify-between mt-1 text-[10px] text-gray-400">
+          <span>{music.duration ? formatTime(music.duration) : '--:--'}</span>
+          <span>{music.format.toUpperCase()}</span>
+        </div>
+      </div>
+    </div>
+  );
+
   if (viewMode === 'grid') {
     return (
       <div 
@@ -641,270 +940,52 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
             </div>
           </div>
         ) : (
-          <DragDropContext
-            autoScrollerOptions={{
-              startFromPercentage: 0.12,
-              maxScrollAtPercentage: 0.02,
-              maxPixelScroll: 24
-            }}
-            onDragStart={(start) => {
-              document.body.style.userSelect = 'none';
-              gridDragSourceIdRef.current = start.draggableId;
-              setGridDraggingId(start.draggableId);
-              setGridInsertTargetIndex(start.source.index);
-              startSortingAutoScroll(start.draggableId);
-            }}
-            onDragUpdate={handleGridDragUpdate}
-            onDragEnd={handleGridDndEnd}
-          >
-            <Droppable droppableId="music-grid" direction="horizontal">
-              {(provided, snapshot) => (
+          <>
+            <div
+              id="music-grid-container"
+              className="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-7 gap-3 relative"
+            >
+              {sortedMusicFiles.map((music, index) => (
                 <div
-                  id="music-grid-container"
-                  ref={provided.innerRef}
-                  {...provided.droppableProps}
-                  className={`flex flex-wrap gap-3 relative ${
-                    snapshot.isDraggingOver ? 'bg-blue-50/30 rounded-xl' : ''
-                  }`}
+                  key={music.id}
+                  data-grid-sort-item="true"
+                  data-grid-index={index}
+                  data-grid-id={music.id}
+                  className="relative min-w-0 touch-none"
+                  onPointerDown={(event) => beginGridPointerDrag(event, music, index)}
+                  onPointerMove={(event) => updateGridPointerDrag(event, music)}
+                  onPointerUp={(event) => endGridPointerDrag(event, music)}
+                  onPointerCancel={(event) => cancelGridPointerDrag(event, music)}
+                  style={{ opacity: gridDraggingId === music.id ? 0.35 : 1 }}
                 >
-                  {sortedMusicFiles.map((music, index) => (
-                    <Draggable key={music.id} draggableId={music.id} index={index}>
-                      {(dragProvided, dragSnapshot) => (
-                        <div
-                          ref={dragProvided.innerRef}
-                          {...dragProvided.draggableProps}
-                          {...dragProvided.dragHandleProps}
-                          className="relative w-[31%] md:w-[23%] lg:w-[15%] xl:w-[13%] min-w-0"
-                          style={dragProvided.draggableProps.style}
-                        >
-                          {gridDraggingId && gridInsertIndex === index && !dragSnapshot.isDragging && (
-                            <div className="absolute inset-x-0 -top-1 h-1 rounded-full bg-blue-500 shadow-sm" />
-                          )}
-                          <div
-                            id={`music-item-${music.id}`}
-                            data-grid-sort-item="true"
-                            data-grid-index={index}
-                            data-grid-id={music.id}
-                            className={`group relative rounded-xl cursor-grab active:cursor-grabbing select-none ${
-                            selectedIds.has(music.id) ? 'ring-2 ring-blue-500' : ''
-                          } ${
-                            music.isPlaying && isPlaying
-                              ? 'bg-gradient-to-br from-green-50 to-emerald-50 ring-4 ring-green-400 shadow-2xl shadow-green-300/60 transform hover:scale-105'
-                              : currentMusic?.id === music.id
-                                ? 'bg-gradient-to-br from-purple-50 to-blue-50 ring-2 ring-purple-500'
-                                : 'bg-white'
-                          } ${
-                            highlightedId === music.id
-                              ? 'ring-2 ring-yellow-400 bg-yellow-50'
-                              : ''
-                          } ${
-                              dragSnapshot.isDragging
-                                ? 'bg-white ring-2 ring-blue-300 shadow-2xl'
-                                : ''
-                          }`}
-                          style={{
-                            boxShadow: dragSnapshot.isDragging ? '0 16px 32px rgba(15, 23, 42, 0.22)' : undefined,
-                            zIndex: dragSnapshot.isDragging ? 1000 : undefined
-                          }}
-                          onClick={(e) => handleSelect(music.id, e)}
-                          onDoubleClick={(event) => {
-                            event.preventDefault();
-                            event.stopPropagation();
-                            onPlayMusic(music, { restartSame: true });
-                          }}
-                        >
-                          {/* 灏侀潰 */}
-                          <div className={`aspect-[16/9] relative overflow-hidden rounded-t-xl ${
-                            music.isPlaying && isPlaying ? 'bg-gradient-to-br from-green-400 via-emerald-500 to-teal-500' : 'bg-gradient-to-br from-blue-400 via-purple-500 to-pink-500'
-                          }`}>
-                            <div className="absolute inset-0 flex items-center justify-center">
-                              {music.isPlaying && isPlaying ? (
-                                <div className="flex items-center justify-center">
-                                  {/* 鍔ㄦ€佹挱鏀炬寚绀哄櫒 */}
-                                  <div className="flex space-x-1">
-                                    <div className="w-1 h-6 bg-white rounded-full animate-pulse"></div>
-                                    <div className="w-1 h-8 bg-white rounded-full animate-pulse delay-75"></div>
-                                    <div className="w-1 h-6 bg-white rounded-full animate-pulse delay-150"></div>
-                                    <div className="w-1 h-8 bg-white rounded-full animate-pulse delay-300"></div>
-                                  </div>
-                                </div>
-                              ) : (
-                                <MusicNoteIcon className="w-8 h-8 text-white/50" />
-                              )}
-                            </div>
-                            
-                            {/* 鎾斁鐘舵€佹爣璇?*/}
-                            {music.isPlaying && isPlaying && (
-                              <div className="absolute top-2 left-2 bg-green-500 text-white text-xs px-2 py-1 rounded-full font-medium animate-pulse shadow-lg">
-                                正在播放
-                              </div>
-                            )}
-                            
-                            {/* 姝ｅ湪鎾斁鐨勮剦鍔ㄨ竟妗嗘晥鏋?*/}
-                            {music.isPlaying && isPlaying && (
-                              <div className="absolute inset-0 rounded-xl border-2 border-green-400 animate-ping opacity-75"></div>
-                            )}
-                            
-                            {/* 鎾斁鎸夐挳 */}
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                onPlayMusic(music);
-                              }}
-                              className={`absolute inset-0 bg-black/0 hover:bg-black/40 flex items-center justify-center transition-all duration-200 ${
-                                music.isPlaying && isPlaying ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
-                              }`}
-                            >
-                              {music.isPlaying && isPlaying ? (
-                                <PauseIcon className="w-10 h-10 text-white drop-shadow-lg bg-black/20 rounded-full p-2" />
-                              ) : (
-                                <PlayIcon className="w-8 h-8 text-white drop-shadow-lg" />
-                              )}
-                            </button>
-            
-                            {/* 鎿嶄綔鎸夐挳 */}
-                            <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  console.log('点击更多按钮，当前ID:', music.id, '当前contextMenuId:', contextMenuId);
-                                  setContextMenuId(contextMenuId === music.id ? null : music.id);
-                                }}
-                                className="w-6 h-6 bg-blue-500 hover:bg-blue-600 rounded-full flex items-center justify-center text-white shadow-lg"
-                                title="更多操作"
-                              >
-                                <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24">
-                                  <path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/>
-                                </svg>
-                              </button>
-                            </div>
-                          </div>
-            
-                          {/* 鑿滃崟 - 浣跨敤 fixed 瀹氫綅锛屽畬鍏ㄧ嫭绔嬶紝鏄剧ず鍦ㄥ睆骞曚腑澶?*/}
-                          {contextMenuId === music.id && (
-                            <>
-                              {/* 閬僵灞?- 鐐瑰嚮鍏抽棴鑿滃崟 */}
-                              <div 
-                                className="fixed inset-0 z-[9998]" 
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setContextMenuId(null);
-                                }}
-                              />
-                              
-                              {/* 鑿滃崟鍐呭 */}
-                              <div 
-                                className="fixed bg-white dark:bg-slate-800 rounded-lg shadow-2xl border-2 border-blue-500 py-2 z-[9999] min-w-[180px]"
-                                style={{
-                                  top: '50%',
-                                  left: '50%',
-                                  transform: 'translate(-50%, -50%)'
-                                }}
-                                onClick={(e) => e.stopPropagation()}
-                              >
-                                <div className="px-4 py-2 border-b border-gray-200 dark:border-slate-700">
-                                  <p className="text-xs font-semibold text-gray-500 dark:text-gray-400">操作菜单</p>
-                                </div>
-                                
-                                {/* 閲嶅懡鍚?*/}
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setEditingId(music.id);
-                                    setEditingName(music.name);
-                                    setContextMenuId(null);
-                                  }}
-                                  className="w-full px-4 py-3 text-left text-sm text-gray-700 dark:text-gray-200 hover:bg-blue-50 dark:hover:bg-slate-700 flex items-center space-x-3 transition-colors"
-                                >
-                                  <EditIcon className="w-5 h-5 text-blue-500" />
-                                  <span className="font-medium">重命名</span>
-                                </button>
-                                
-                                {/* 娣诲姞鍒版瓕鍗?*/}
-                                {onAddToPlaylist && playlists.length > 0 && (
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setSelectedMusicForPlaylist(music);
-                                      setShowAddToPlaylistModal(true);
-                                      setContextMenuId(null);
-                                    }}
-                                    className="w-full px-4 py-3 text-left text-sm text-gray-700 dark:text-gray-200 hover:bg-blue-50 dark:hover:bg-slate-700 flex items-center space-x-3 transition-colors"
-                                  >
-                                    <PlusIcon className="w-5 h-5 text-green-500" />
-                                    <span className="font-medium">添加到歌单</span>
-                                  </button>
-                                )}
-                                
-                                {/* 鍓緫闊充箰 */}
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    console.log('点击剪辑按钮，音乐ID:', music.id);
-                                    setContextMenuId(null);
-                                    setTimeout(() => {
-                                      const targetHash = buildAudioEditorHash(music.id, currentPlaylistId);
-                                      console.log('设置hash:', targetHash);
-                                      window.location.hash = targetHash;
-                                    }, 100);
-                                  }}
-                                  className="w-full px-4 py-3 text-left text-sm text-gray-700 dark:text-gray-200 hover:bg-blue-50 dark:hover:bg-slate-700 flex items-center space-x-3 transition-colors"
-                                >
-                                  <svg className="w-5 h-5 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                                  </svg>
-                                  <span className="font-medium">剪辑音乐</span>
-                                </button>
-                                
-                                <hr className="my-2 border-gray-200 dark:border-slate-700" />
-                                
-                                {/* 鍒犻櫎 */}
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    onDeleteMusic(music.id);
-                                    setContextMenuId(null);
-                                  }}
-                                  className="w-full px-4 py-3 text-left text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center space-x-3 transition-colors"
-                                >
-                                  <DeleteIcon className="w-5 h-5" />
-                                  <span className="font-medium">删除</span>
-                                </button>
-                              </div>
-                            </>
-                          )}
-
-                          {/* 淇℃伅 */}
-                          <div className="p-2">
-                            <div className="flex items-center justify-between mb-0.5">
-                              <h4 className="font-medium text-gray-900 truncate text-sm flex-1">
-                              {music.name}
-                            </h4>
-                              {music.isTrimmed && (
-                                <TrimmedIcon className="w-3 h-3 text-orange-500 ml-1 flex-shrink-0" title="已剪辑" />
-                              )}
-                            </div>
-                            <p className="text-xs text-gray-500 truncate">
-                              {music.artist || '未知歌手'}
-                            </p>
-                            <div className="flex items-center justify-between mt-1 text-[10px] text-gray-400">
-                              <span>{music.duration ? formatTime(music.duration) : '--:--'}</span>
-                              <span>{music.format.toUpperCase()}</span>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                      )}
-                    </Draggable>
-                  ))}
-                  {gridDraggingId && gridInsertIndex === sortedMusicFiles.length && (
-                    <div className="w-full h-1 rounded-full bg-blue-500 shadow-sm" />
+                  {gridDraggingId && gridInsertIndex === index && gridDraggingId !== music.id && (
+                    <div className="absolute inset-x-0 -top-1 h-1 rounded-full bg-blue-500 shadow-sm z-10" />
                   )}
-                  {provided.placeholder}
+                  {renderGridCard(music)}
                 </div>
+              ))}
+              {gridDraggingId && gridInsertIndex === sortedMusicFiles.length && (
+                <div className="col-span-full h-1 rounded-full bg-blue-500 shadow-sm" />
               )}
-            </Droppable>
-          </DragDropContext>
+            </div>
+            {gridDragPreview && (() => {
+              const previewMusic = sortedMusicFiles.find((music) => music.id === gridDragPreview.id);
+              if (!previewMusic) return null;
+              return (
+                <div
+                  className="fixed pointer-events-none z-[10000]"
+                  style={{
+                    left: gridDragPreview.x - gridDragPreview.width / 2,
+                    top: gridDragPreview.y - gridDragPreview.height / 2,
+                    width: gridDragPreview.width,
+                    height: gridDragPreview.height
+                  }}
+                >
+                  {renderGridCard(previewMusic, true)}
+                </div>
+              );
+            })()}
+          </>
         )}
       </div>
     );
