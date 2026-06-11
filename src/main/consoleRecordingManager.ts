@@ -7,6 +7,7 @@ import { resolveFFmpegTool } from './ffmpegResolver';
 
 const writeFile = promisify(fs.writeFile);
 const mkdir = promisify(fs.mkdir);
+const stat = promisify(fs.stat);
 
 interface ConsoleRecordingOptions {
   deviceId?: string;
@@ -779,17 +780,16 @@ class ConsoleRecordingManager {
     if (!proc || proc.killed || proc.exitCode !== null) return;
 
     try {
-      if (process.platform === 'win32') {
-        proc.kill('SIGTERM');
-        return;
-      }
-
       if (proc.stdin && !proc.stdin.destroyed && proc.stdin.writable) {
         try {
           proc.stdin.write('q');
           proc.stdin.end();
         } catch {}
       }
+
+      const interruptDelay = fast ? 100 : (process.platform === 'win32' ? 2500 : 800);
+      const terminateDelay = fast ? 400 : (process.platform === 'win32' ? 6000 : 1600);
+      const killDelay = fast ? 1000 : (process.platform === 'win32' ? 9000 : 5000);
 
       if (fast && proc.exitCode === null && !proc.killed) {
         try {
@@ -803,7 +803,7 @@ class ConsoleRecordingManager {
             proc.kill('SIGINT');
           } catch {}
         }
-      }, fast ? 100 : 800);
+      }, interruptDelay);
 
       setTimeout(() => {
         if (proc.exitCode === null && !proc.killed) {
@@ -811,20 +811,67 @@ class ConsoleRecordingManager {
             proc.kill('SIGTERM');
           } catch {}
         }
-      }, fast ? 400 : 1600);
+      }, terminateDelay);
 
-      if (fast) {
-        setTimeout(() => {
-          if (proc.exitCode === null && !proc.killed) {
-            try {
-              proc.kill('SIGKILL');
-            } catch {}
-          }
-        }, 1000);
-      }
+      setTimeout(() => {
+        if (proc.exitCode === null && !proc.killed) {
+          try {
+            proc.kill('SIGKILL');
+          } catch {}
+        }
+      }, killDelay);
     } catch (error) {
       console.warn('停止FFmpeg录音进程失败:', error);
     }
+  }
+
+  private waitForRecordingProcessExit(
+    proc: any,
+    timeoutMs = 10000
+  ): Promise<{ code: number | null; signal: NodeJS.Signals | null; timedOut: boolean }> {
+    if (!proc || proc.exitCode !== null || proc.killed) {
+      return Promise.resolve({
+        code: typeof proc?.exitCode === 'number' ? proc.exitCode : null,
+        signal: proc?.signalCode || null,
+        timedOut: false
+      });
+    }
+
+    return new Promise((resolve) => {
+      let settled = false;
+      let timeout: NodeJS.Timeout | null = null;
+
+      const finish = (code: number | null, signal: NodeJS.Signals | null, timedOut: boolean) => {
+        if (settled) return;
+        settled = true;
+        if (timeout) {
+          clearTimeout(timeout);
+          timeout = null;
+        }
+        try {
+          proc.removeListener('close', onClose);
+        } catch {}
+        resolve({ code, signal, timedOut });
+      };
+
+      const onClose = (code: number | null, signal: NodeJS.Signals | null) => {
+        finish(code, signal, false);
+      };
+
+      proc.once('close', onClose);
+      timeout = setTimeout(() => {
+        try {
+          if (proc.exitCode === null && !proc.killed) {
+            proc.kill('SIGKILL');
+          }
+        } catch {}
+        finish(
+          typeof proc.exitCode === 'number' ? proc.exitCode : null,
+          proc.signalCode || null,
+          true
+        );
+      }, timeoutMs);
+    });
   }
 
   /**
@@ -999,7 +1046,6 @@ class ConsoleRecordingManager {
         const baseArgs = [
           '-hide_banner',
           '-loglevel', 'warning',
-          ...(process.platform === 'win32' ? ['-nostdin'] : []),
           '-thread_queue_size', '1024',
           ...(process.platform === 'win32' ? ['-rtbufsize', '256M', '-audio_buffer_size', '80'] : []),
           '-f', inputFormat,
@@ -1176,16 +1222,42 @@ class ConsoleRecordingManager {
         return { success: false, error: '没有正在进行的录音' };
       }
 
+      const session = this.currentSession;
+      const processRef = this.recordingProcess;
       this.isStoppingRecording = true;
       this.isStartingRecording = false;
 
       // 停止FFmpeg进程
-      if (this.recordingProcess && !this.recordingProcess.killed && this.recordingProcess.exitCode === null) {
+      if (processRef && !processRef.killed && processRef.exitCode === null) {
         // 使用q/SIGINT/SIGTERM逐级停止录音，让FFmpeg正确关闭文件并释放麦克风
-        this.terminateRecordingProcess();
+        this.terminateRecordingProcess(processRef);
+        const exitResult = await this.waitForRecordingProcessExit(processRef, process.platform === 'win32' ? 12000 : 8000);
+        if (exitResult.timedOut) {
+          console.warn('等待FFmpeg结束超时，已强制结束录音进程');
+        }
       } else {
         this.recordingProcess = null;
         this.isStoppingRecording = false;
+      }
+
+      try {
+        const outputStat = await stat(session.outputPath);
+        if (!outputStat.isFile() || outputStat.size <= 44) {
+          throw new Error(`录音文件未正确写入或为空: ${session.outputPath}`);
+        }
+      } catch (fileError) {
+        if (session) {
+          session.status = 'error';
+          session.error = fileError instanceof Error ? fileError.message : String(fileError);
+        }
+        this.isRecording = false;
+        this.isStoppingRecording = false;
+        if (this.recordingProcess === processRef) {
+          this.recordingProcess = null;
+        }
+        const message = fileError instanceof Error ? fileError.message : '录音文件保存失败';
+        console.error('录音文件校验失败:', fileError);
+        return { success: false, error: message };
       }
 
       // 更新会话状态
@@ -1195,9 +1267,14 @@ class ConsoleRecordingManager {
       }
 
       this.isRecording = false;
+      this.isStoppingRecording = false;
+      if (this.recordingProcess === processRef) {
+        this.recordingProcess = null;
+      }
 
-      // 通知渲染进程已停止
-      this.emitStopped();
+      if (this.isRecording) {
+        this.emitStopped();
+      }
 
       return { success: true };
     } catch (error) {

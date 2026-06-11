@@ -41,6 +41,22 @@ let musicDecryptor: MusicDecryptor | null = null;
 let dataManager: DataManager | null = null;
 let ipcHandlersRegistered = false; // 防止重复注册IPC处理器
 
+function getAppIconPath(): string {
+  if (process.platform === 'win32') {
+    const packagedIconPath = process.resourcesPath ? path.join(process.resourcesPath, 'app-icon.ico') : '';
+    if (packagedIconPath && fs.existsSync(packagedIconPath)) {
+      return packagedIconPath;
+    }
+
+    const buildIconPath = path.join(__dirname, '../../build/app-icon.ico');
+    if (fs.existsSync(buildIconPath)) {
+      return buildIconPath;
+    }
+  }
+
+  return path.join(__dirname, '../../public/app-icon.png');
+}
+
 function getDataManager(): DataManager {
   if (!dataManager) {
     dataManager = DataManager.getInstance();
@@ -277,7 +293,7 @@ function createWindow() {
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 15, y: 15 },
     backgroundColor: '#1f2937',
-    icon: path.join(__dirname, '../../public/app-icon.png'),
+    icon: getAppIconPath(),
     show: false // 窗口准备好后再显示
   });
 
@@ -353,7 +369,7 @@ function createWindow() {
     } else {
       console.error('无法找到HTML文件，尝试加载网络地址...');
       // 最后的备用方案
-      mainWindow.loadURL('data:text/html,<h1 style="text-align:center;margin-top:50px;font-family:system-ui;">音乐下载正在启动...</h1><p style="text-align:center;color:#666;">如果持续显示此页面，请重新安装应用</p>');
+      mainWindow.loadURL('data:text/html,<h1 style="text-align:center;margin-top:50px;font-family:system-ui;">YIYU 正在启动...</h1><p style="text-align:center;color:#666;">如果持续显示此页面，请重新安装应用</p>');
     }
   }
 
@@ -370,7 +386,7 @@ function setChineseApplicationMenu() {
     ...(isMac
       ? [{
           role: 'appMenu',
-          label: '音乐下载'
+          label: 'YIYU'
         }]
       : []),
     {
@@ -425,7 +441,7 @@ function setChineseApplicationMenu() {
             dialog.showMessageBox({
               type: 'info',
               title: '关于',
-              message: '音乐下载',
+              message: 'YIYU',
               detail: `版本 ${app.getVersion()}\n用于婚礼音乐播放和管理的专业软件`
             });
           }

@@ -692,6 +692,7 @@ function ImprovedApp() {
   const [isRecordingStarting, setIsRecordingStarting] = useState(false);
   const [globalRecordingTime, setGlobalRecordingTime] = useState(0);
   const [globalRecordingPath, setGlobalRecordingPath] = useState('');
+  const recordingTimerRef = useRef<NodeJS.Timeout | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [highlightedId, setHighlightedId] = useState<string | null>(null);
   
@@ -710,6 +711,21 @@ function ImprovedApp() {
   const getCurrentPlayingPlaylist = () => {
     if (!currentPlayingPlaylistId) return null;
     return playlists.find(p => p.id === currentPlayingPlaylistId) || null;
+  };
+
+  const clearRecordingTimer = () => {
+    if (recordingTimerRef.current) {
+      clearInterval(recordingTimerRef.current);
+      recordingTimerRef.current = null;
+    }
+  };
+
+  const startRecordingTimer = (initialSeconds = 0) => {
+    clearRecordingTimer();
+    setGlobalRecordingTime(initialSeconds);
+    recordingTimerRef.current = setInterval(() => {
+      setGlobalRecordingTime(prev => prev + 1);
+    }, 1000);
   };
 
   // 播放模式循环切换函数
@@ -784,22 +800,6 @@ function ImprovedApp() {
     let unsubscribeStarted: (() => void) | null = null;
     let unsubscribeStopped: (() => void) | null = null;
     let unsubscribeError: (() => void) | null = null;
-    let recordingTimer: NodeJS.Timeout | null = null;
-
-    const clearRecordingTimer = () => {
-      if (recordingTimer) {
-        clearInterval(recordingTimer);
-        recordingTimer = null;
-      }
-    };
-
-    const startRecordingTimer = (initialSeconds = 0) => {
-      clearRecordingTimer();
-      setGlobalRecordingTime(initialSeconds);
-      recordingTimer = setInterval(() => {
-        setGlobalRecordingTime(prev => prev + 1);
-      }, 1000);
-    };
 
     if (window.electronAPI?.consoleRecording) {
       // 监听录音开始事件
@@ -855,7 +855,7 @@ function ImprovedApp() {
 
     return () => {
       // 清理事件监听和计时器
-      if (unsubscribeStarted) unsubscribeStarted();
+        if (unsubscribeStarted) unsubscribeStarted();
       if (unsubscribeStopped) unsubscribeStopped();
       if (unsubscribeError) unsubscribeError();
       clearRecordingTimer();
@@ -3070,6 +3070,9 @@ function ImprovedApp() {
           return;
         }
         setIsRecordingStarting(false);
+        setIsGlobalRecording(true);
+        setGlobalRecordingPath(options.outputPath || '');
+        startRecordingTimer(0);
       }
     } catch (error) {
       setIsRecordingStarting(false);

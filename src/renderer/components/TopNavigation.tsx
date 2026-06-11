@@ -135,11 +135,11 @@ export const TopNavigation: React.FC<TopNavigationProps> = ({
             </div>
           </div>
         </div>
-        {/* 右侧：音乐下载按钮、录音指示器、主题切换和手卡 */}
+        {/* 右侧：YIYU 按钮、录音指示器、主题切换和手卡 */}
         <div className="flex items-center gap-3 ml-4" style={{ ['WebkitAppRegion' as any]: 'no-drag' }}>
           <ThemeSwitcher />
 
-          {/* 音乐下载网站跳转按钮 */}
+          {/* YIYU 网站跳转按钮 */}
           <button
             onClick={() => {
               // 使用 Electron 的 shell 打开外部链接
@@ -151,7 +151,7 @@ export const TopNavigation: React.FC<TopNavigationProps> = ({
               }
             }}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-all duration-200 ${themeColors.hoverModuleBg} ${themeColors.inactiveModuleText} hover:${themeColors.activeModuleBg} hover:${themeColors.activeModuleText} hover:shadow-md`}
-            title="打开音乐下载网站 - 下载音乐资源"
+            title="打开 YIYU 音乐资源网站"
           >
             <svg 
               className="w-5 h-5" 
@@ -166,7 +166,7 @@ export const TopNavigation: React.FC<TopNavigationProps> = ({
                 d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" 
               />
             </svg>
-            <span className="text-sm font-medium">音乐下载</span>
+            <span className="text-sm font-medium">YIYU</span>
             <svg 
               className="w-4 h-4" 
               fill="none" 

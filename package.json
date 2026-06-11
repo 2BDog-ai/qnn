@@ -89,6 +89,10 @@
     "afterPack": "./scripts/afterpack.js",
     "extraResources": [
       {
+        "from": "build/app-icon.ico",
+        "to": "app-icon.ico"
+      },
+      {
         "from": "resources/ffmpeg",
         "to": "ffmpeg",
         "filter": [
@@ -234,7 +238,7 @@
           ]
         }
       ],
-      "icon": "public/app-icon.png",
+      "icon": "build/app-icon.ico",
       "signAndEditExecutable": false,
       "publisherName": "????",
       "verifyUpdateCodeSignature": false,
@@ -281,6 +285,8 @@
       "createDesktopShortcut": "always",
       "createStartMenuShortcut": true,
       "shortcutName": "YIYU",
+      "installerIcon": "build/app-icon.ico",
+      "uninstallerIcon": "build/app-icon.ico",
       "runAfterFinish": false,
       "warningsAsErrors": false
     }

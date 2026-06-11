@@ -114,9 +114,17 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
   const listRawInsertIndexRef = useRef<number | null>(null);
   const gridDragSourceIdRef = useRef<string | null>(null);
   const gridDragSourceIndexRef = useRef<number | null>(null);
+  const gridDragSourceElementRef = useRef<HTMLElement | null>(null);
   const gridDragStartedRef = useRef(false);
   const gridPointerIdRef = useRef<number | null>(null);
   const gridPendingPointerRef = useRef<{ x: number; y: number; id: string; index: number } | null>(null);
+  const gridGlobalPointerHandlersRef = useRef<{
+    move: (event: PointerEvent) => void;
+    up: (event: PointerEvent) => void;
+    cancel: (event: PointerEvent) => void;
+    blur: () => void;
+  } | null>(null);
+  const gridSuppressClickUntilRef = useRef(0);
   const [gridDraggingId, setGridDraggingId] = useState<string | null>(null);
   const [gridInsertIndex, setGridInsertIndex] = useState<number | null>(null);
   const [gridDragPreview, setGridDragPreview] = useState<{
@@ -292,6 +300,7 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('touchmove', handleTouchMove);
       document.removeEventListener('dragover', handleDocumentDragOver);
+      removeGridGlobalPointerHandlers();
       stopSortingAutoScroll();
     };
   }, []);
@@ -371,11 +380,24 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
     }
   };
 
+  const removeGridGlobalPointerHandlers = () => {
+    const handlers = gridGlobalPointerHandlersRef.current;
+    if (!handlers) return;
+
+    window.removeEventListener('pointermove', handlers.move, true);
+    window.removeEventListener('pointerup', handlers.up, true);
+    window.removeEventListener('pointercancel', handlers.cancel, true);
+    window.removeEventListener('blur', handlers.blur, true);
+    gridGlobalPointerHandlersRef.current = null;
+  };
+
   const cleanupGridPointerDrag = () => {
+    removeGridGlobalPointerHandlers();
     document.body.style.userSelect = '';
     stopSortingAutoScroll();
     gridPointerIdRef.current = null;
     gridPendingPointerRef.current = null;
+    gridDragSourceElementRef.current = null;
     gridDragStartedRef.current = false;
     gridDragSourceIndexRef.current = null;
     gridDragSourceIdRef.current = null;
@@ -486,6 +508,94 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
     }
   };
 
+  const updateGridPointerDragFromPoint = (
+    clientX: number,
+    clientY: number,
+    currentTarget?: HTMLElement | null
+  ) => {
+    const pending = gridPendingPointerRef.current;
+    if (!pending) return;
+
+    const deltaX = clientX - pending.x;
+    const deltaY = clientY - pending.y;
+    const movedEnough = Math.hypot(deltaX, deltaY) >= 4;
+
+    if (!gridDragStartedRef.current && movedEnough) {
+      const sourceElement = currentTarget || gridDragSourceElementRef.current;
+      const rect = sourceElement?.getBoundingClientRect();
+      gridDragStartedRef.current = true;
+      document.body.style.userSelect = 'none';
+      setGridDraggingId(pending.id);
+      setGridDragPreview({
+        id: pending.id,
+        x: clientX,
+        y: clientY,
+        width: rect?.width || 180,
+        height: rect?.height || 140
+      });
+      dragPointerRef.current = { x: clientX, y: clientY };
+      startSortingAutoScroll(pending.id);
+    }
+
+    if (!gridDragStartedRef.current) return;
+
+    dragPointerRef.current = { x: clientX, y: clientY };
+    setGridDragPreview((current) => current ? {
+      ...current,
+      x: clientX,
+      y: clientY
+    } : current);
+    setGridInsertTargetIndex(getGridInsertionIndex(clientX, clientY));
+  };
+
+  const addGridGlobalPointerHandlers = () => {
+    removeGridGlobalPointerHandlers();
+
+    const handleMove = (event: PointerEvent) => {
+      if (gridPointerIdRef.current !== event.pointerId || !gridDragSourceIdRef.current) return;
+      updateGridPointerDragFromPoint(event.clientX, event.clientY);
+      if (gridDragStartedRef.current) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    };
+
+    const handleUp = (event: PointerEvent) => {
+      if (gridPointerIdRef.current !== event.pointerId || !gridDragSourceIdRef.current) return;
+      if (gridDragStartedRef.current) {
+        event.preventDefault();
+        event.stopPropagation();
+        gridSuppressClickUntilRef.current = Date.now() + 350;
+        commitGridPointerReorder();
+      } else {
+        cleanupGridPointerDrag();
+      }
+    };
+
+    const handleCancel = (event: PointerEvent) => {
+      if (gridPointerIdRef.current !== event.pointerId || !gridDragSourceIdRef.current) return;
+      cleanupGridPointerDrag();
+    };
+
+    const handleBlur = () => {
+      if (gridDragSourceIdRef.current) {
+        cleanupGridPointerDrag();
+      }
+    };
+
+    gridGlobalPointerHandlersRef.current = {
+      move: handleMove,
+      up: handleUp,
+      cancel: handleCancel,
+      blur: handleBlur
+    };
+
+    window.addEventListener('pointermove', handleMove, { capture: true, passive: false });
+    window.addEventListener('pointerup', handleUp, { capture: true, passive: false });
+    window.addEventListener('pointercancel', handleCancel, { capture: true, passive: true });
+    window.addEventListener('blur', handleBlur, true);
+  };
+
   const beginGridPointerDrag = (event: React.PointerEvent<HTMLDivElement>, music: MusicFile, index: number) => {
     if (event.button !== 0) return;
     const target = event.target as HTMLElement | null;
@@ -500,7 +610,9 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
     gridPointerIdRef.current = event.pointerId;
     gridDragSourceIdRef.current = music.id;
     gridDragSourceIndexRef.current = index;
+    gridDragSourceElementRef.current = event.currentTarget;
     setGridInsertTargetIndex(index);
+    addGridGlobalPointerHandlers();
 
     try {
       event.currentTarget.setPointerCapture(event.pointerId);
@@ -512,40 +624,12 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
   const updateGridPointerDrag = (event: React.PointerEvent<HTMLDivElement>, music: MusicFile) => {
     if (gridPointerIdRef.current !== event.pointerId || gridDragSourceIdRef.current !== music.id) return;
 
-    const pending = gridPendingPointerRef.current;
-    if (!pending) return;
+    updateGridPointerDragFromPoint(event.clientX, event.clientY, event.currentTarget);
 
-    const deltaX = event.clientX - pending.x;
-    const deltaY = event.clientY - pending.y;
-    const movedEnough = Math.hypot(deltaX, deltaY) >= 4;
-
-    if (!gridDragStartedRef.current && movedEnough) {
-      const rect = event.currentTarget.getBoundingClientRect();
-      gridDragStartedRef.current = true;
-      document.body.style.userSelect = 'none';
-      setGridDraggingId(music.id);
-      setGridDragPreview({
-        id: music.id,
-        x: event.clientX,
-        y: event.clientY,
-        width: rect.width,
-        height: rect.height
-      });
-      dragPointerRef.current = { x: event.clientX, y: event.clientY };
-      startSortingAutoScroll(music.id);
+    if (gridDragStartedRef.current) {
+      event.preventDefault();
+      event.stopPropagation();
     }
-
-    if (!gridDragStartedRef.current) return;
-
-    event.preventDefault();
-    event.stopPropagation();
-    dragPointerRef.current = { x: event.clientX, y: event.clientY };
-    setGridDragPreview((current) => current ? {
-      ...current,
-      x: event.clientX,
-      y: event.clientY
-    } : current);
-    setGridInsertTargetIndex(getGridInsertionIndex(event.clientX, event.clientY));
   };
 
   const endGridPointerDrag = (event: React.PointerEvent<HTMLDivElement>, music: MusicFile) => {
@@ -622,6 +706,7 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
 
   // 鎷栨嫿鏂囦欢瀵煎叆澶勭悊鍑芥暟
   const handleDragOver = (e: React.DragEvent) => {
+    if (isSortingDragRef.current) return;
     if (!isFileDragEvent(e)) return;
     e.preventDefault();
     e.stopPropagation();
@@ -629,6 +714,7 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
   };
 
   const handleDragEnter = (e: React.DragEvent) => {
+    if (isSortingDragRef.current) return;
     if (!isFileDragEvent(e)) return;
     e.preventDefault();
     e.stopPropagation();
@@ -636,6 +722,7 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
   };
 
   const handleDragLeave = (e: React.DragEvent) => {
+    if (isSortingDragRef.current) return;
     if (!isFileDragEvent(e)) return;
     e.preventDefault();
     e.stopPropagation();
@@ -649,6 +736,7 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
   };
 
   const handleDrop = (e: React.DragEvent) => {
+    if (isSortingDragRef.current) return;
     if (!isFileDragEvent(e)) return;
     e.preventDefault();
     e.stopPropagation();
@@ -703,6 +791,11 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
         boxShadow: isDragging ? '0 16px 32px rgba(15, 23, 42, 0.22)' : undefined
       }}
       onClick={(e) => {
+        if (Date.now() < gridSuppressClickUntilRef.current) {
+          e.preventDefault();
+          e.stopPropagation();
+          return;
+        }
         if (gridDragStartedRef.current) return;
         handleSelect(music.id, e);
       }}
@@ -899,7 +992,7 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
         onDrop={handleDrop}
       >
         {/* 鎷栨嫿瑕嗙洊灞?*/}
-        {isDragOver && (
+        {isDragOver && !gridDraggingId && (
           <div className="absolute inset-0 bg-blue-500/20 border-2 border-dashed border-blue-500 rounded-lg flex items-center justify-center z-50">
             <div className="bg-white/90 backdrop-blur-sm px-6 py-4 rounded-lg shadow-lg">
               <div className="text-center">
@@ -956,6 +1049,8 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
                   onPointerMove={(event) => updateGridPointerDrag(event, music)}
                   onPointerUp={(event) => endGridPointerDrag(event, music)}
                   onPointerCancel={(event) => cancelGridPointerDrag(event, music)}
+                  onDragStart={(event) => event.preventDefault()}
+                  draggable={false}
                   style={{ opacity: gridDraggingId === music.id ? 0.35 : 1 }}
                 >
                   {gridDraggingId && gridInsertIndex === index && gridDraggingId !== music.id && (
@@ -1001,7 +1096,7 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
       onDrop={handleDrop}
     >
       {/* 鎷栨嫿瑕嗙洊灞?*/}
-      {isDragOver && (
+      {isDragOver && !listDragSourceIdRef.current && (
         <div className="absolute inset-0 bg-blue-500/20 border-2 border-dashed border-blue-500 rounded-lg flex items-center justify-center z-50">
           <div className="bg-white/95 backdrop-blur-sm px-8 py-6 rounded-lg shadow-xl">
             <div className="text-center">

@@ -206,7 +206,7 @@ export const AudioEditor: React.FC<AudioEditorProps> = ({ musicId, sourcePlaylis
     const rect = container.getBoundingClientRect();
     const dpr = window.devicePixelRatio || 1;
     const width = Math.max(320, Math.floor(rect.width));
-    const height = Math.max(220, Math.floor(rect.height));
+    const height = Math.max(110, Math.floor(rect.height));
 
     canvas.width = Math.floor(width * dpr);
     canvas.height = Math.floor(height * dpr);
@@ -1013,7 +1013,7 @@ export const AudioEditor: React.FC<AudioEditorProps> = ({ musicId, sourcePlaylis
               <div
                 ref={canvasContainerRef}
                 className="relative bg-gray-50 rounded-lg border border-gray-200 overflow-hidden"
-                style={{ minHeight: 280, height: '42vh', maxHeight: 430 }}
+                style={{ minHeight: 140, height: '21vh', maxHeight: 215 }}
               >
                 <canvas
                   ref={canvasRef}
