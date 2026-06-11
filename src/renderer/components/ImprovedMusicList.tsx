@@ -113,27 +113,9 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
   const listDragSourceIdRef = useRef<string | null>(null);
   const listRawInsertIndexRef = useRef<number | null>(null);
   const gridDragSourceIdRef = useRef<string | null>(null);
-  const gridDragSourceIndexRef = useRef<number | null>(null);
-  const gridDragSourceElementRef = useRef<HTMLElement | null>(null);
-  const gridDragStartedRef = useRef(false);
-  const gridPointerIdRef = useRef<number | null>(null);
-  const gridPendingPointerRef = useRef<{ x: number; y: number; id: string; index: number } | null>(null);
-  const gridGlobalPointerHandlersRef = useRef<{
-    move: (event: PointerEvent) => void;
-    up: (event: PointerEvent) => void;
-    cancel: (event: PointerEvent) => void;
-    blur: () => void;
-  } | null>(null);
   const gridSuppressClickUntilRef = useRef(0);
   const [gridDraggingId, setGridDraggingId] = useState<string | null>(null);
   const [gridInsertIndex, setGridInsertIndex] = useState<number | null>(null);
-  const [gridDragPreview, setGridDragPreview] = useState<{
-    id: string;
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-  } | null>(null);
 
   const findScrollableParent = (element: Element | null): HTMLElement | null => {
     let current = element instanceof HTMLElement ? element : element?.parentElement || null;
@@ -300,7 +282,6 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('touchmove', handleTouchMove);
       document.removeEventListener('dragover', handleDocumentDragOver);
-      removeGridGlobalPointerHandlers();
       stopSortingAutoScroll();
     };
   }, []);
@@ -346,31 +327,57 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
     return musicFiles;
   }, [musicFiles]);
 
-  const handleDragEnd = (result: DropResult) => {
-    const rawInsertIndex = listRawInsertIndexRef.current;
-    const destinationIndex = rawInsertIndex ?? result.destination?.index ?? null;
-
-    setListDragTarget(null, null);
-    listDragSourceIdRef.current = null;
-
-    if (destinationIndex === null) return;
-
+  const commitReorderByIndex = (sourceIndex: number, destinationIndex: number, rawInsertIndex = false) => {
     const reordered = Array.from(sortedMusicFiles);
-    const [removed] = reordered.splice(result.source.index, 1);
+    const [removed] = reordered.splice(sourceIndex, 1);
+    if (!removed) return;
+
     let insertIndex = destinationIndex;
-    if (rawInsertIndex !== null && insertIndex > result.source.index) {
+    if (rawInsertIndex && insertIndex > sourceIndex) {
       insertIndex -= 1;
     }
     insertIndex = Math.max(0, Math.min(insertIndex, reordered.length));
 
-    if (insertIndex === result.source.index) return;
+    if (insertIndex === sourceIndex) return;
 
     reordered.splice(insertIndex, 0, removed);
     if (onReorder) void onReorder(reordered.map(m => m.id));
   };
 
+  const clearSortingDragState = () => {
+    document.body.style.userSelect = '';
+    stopSortingAutoScroll();
+    listDragSourceIdRef.current = null;
+    listRawInsertIndexRef.current = null;
+    gridDragSourceIdRef.current = null;
+    gridSuppressClickUntilRef.current = Date.now() + 250;
+    setListDragTarget(null, null);
+    setGridDraggingId(null);
+    setGridInsertTargetIndex(null);
+  };
+
+  const handleDragEnd = (result: DropResult) => {
+    const isGridDrag = result.type === 'music-grid' || result.source.droppableId === 'music-grid';
+    const rawInsertIndex = isGridDrag ? dragInsertIndexRef.current : listRawInsertIndexRef.current;
+    const destinationIndex = rawInsertIndex ?? result.destination?.index ?? null;
+
+    clearSortingDragState();
+
+    if (destinationIndex === null) return;
+
+    commitReorderByIndex(result.source.index, destinationIndex, rawInsertIndex !== null);
+  };
+
   const handleDragUpdate = (update: DragUpdate) => {
-    if (update.destination) {
+    if (gridDragSourceIdRef.current) {
+      if (dragPointerRef.current) {
+        setGridInsertTargetIndex(getGridInsertionIndex(dragPointerRef.current.x, dragPointerRef.current.y));
+      } else if (update.destination) {
+        setGridInsertTargetIndex(update.destination.index);
+      } else {
+        setGridInsertTargetIndex(null);
+      }
+    } else if (update.destination) {
       setListDragTarget(update.destination.index);
     } else if (dragPointerRef.current && listDragSourceIdRef.current) {
       const rawInsertIndex = getListInsertionIndex(dragPointerRef.current.y);
@@ -378,32 +385,6 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
     } else {
       setListDragTarget(null);
     }
-  };
-
-  const removeGridGlobalPointerHandlers = () => {
-    const handlers = gridGlobalPointerHandlersRef.current;
-    if (!handlers) return;
-
-    window.removeEventListener('pointermove', handlers.move, true);
-    window.removeEventListener('pointerup', handlers.up, true);
-    window.removeEventListener('pointercancel', handlers.cancel, true);
-    window.removeEventListener('blur', handlers.blur, true);
-    gridGlobalPointerHandlersRef.current = null;
-  };
-
-  const cleanupGridPointerDrag = () => {
-    removeGridGlobalPointerHandlers();
-    document.body.style.userSelect = '';
-    stopSortingAutoScroll();
-    gridPointerIdRef.current = null;
-    gridPendingPointerRef.current = null;
-    gridDragSourceElementRef.current = null;
-    gridDragStartedRef.current = false;
-    gridDragSourceIndexRef.current = null;
-    gridDragSourceIdRef.current = null;
-    setGridDraggingId(null);
-    setGridInsertTargetIndex(null);
-    setGridDragPreview(null);
   };
 
   const getGridInsertionIndex = (clientX: number, clientY: number) => {
@@ -477,182 +458,6 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
     }
 
     return sortedMusicFiles.length;
-  };
-
-  const commitGridPointerReorder = () => {
-    const sourceId = gridDragSourceIdRef.current;
-    const sourceIndex = sourceId
-      ? sortedMusicFiles.findIndex((music) => music.id === sourceId)
-      : gridDragSourceIndexRef.current;
-    const rawDestinationIndex = dragInsertIndexRef.current;
-
-    cleanupGridPointerDrag();
-
-    if (sourceIndex === null || sourceIndex < 0 || rawDestinationIndex === null) {
-      return;
-    }
-
-    const reordered = Array.from(sortedMusicFiles);
-    const [removed] = reordered.splice(sourceIndex, 1);
-    let destinationIndex = rawDestinationIndex;
-
-    if (destinationIndex > sourceIndex) {
-      destinationIndex -= 1;
-    }
-
-    destinationIndex = Math.max(0, Math.min(destinationIndex, reordered.length));
-
-    if (removed && destinationIndex !== sourceIndex) {
-      reordered.splice(destinationIndex, 0, removed);
-      if (onReorder) void onReorder(reordered.map(m => m.id));
-    }
-  };
-
-  const updateGridPointerDragFromPoint = (
-    clientX: number,
-    clientY: number,
-    currentTarget?: HTMLElement | null
-  ) => {
-    const pending = gridPendingPointerRef.current;
-    if (!pending) return;
-
-    const deltaX = clientX - pending.x;
-    const deltaY = clientY - pending.y;
-    const movedEnough = Math.hypot(deltaX, deltaY) >= 4;
-
-    if (!gridDragStartedRef.current && movedEnough) {
-      const sourceElement = currentTarget || gridDragSourceElementRef.current;
-      const rect = sourceElement?.getBoundingClientRect();
-      gridDragStartedRef.current = true;
-      document.body.style.userSelect = 'none';
-      setGridDraggingId(pending.id);
-      setGridDragPreview({
-        id: pending.id,
-        x: clientX,
-        y: clientY,
-        width: rect?.width || 180,
-        height: rect?.height || 140
-      });
-      dragPointerRef.current = { x: clientX, y: clientY };
-      startSortingAutoScroll(pending.id);
-    }
-
-    if (!gridDragStartedRef.current) return;
-
-    dragPointerRef.current = { x: clientX, y: clientY };
-    setGridDragPreview((current) => current ? {
-      ...current,
-      x: clientX,
-      y: clientY
-    } : current);
-    setGridInsertTargetIndex(getGridInsertionIndex(clientX, clientY));
-  };
-
-  const addGridGlobalPointerHandlers = () => {
-    removeGridGlobalPointerHandlers();
-
-    const handleMove = (event: PointerEvent) => {
-      if (gridPointerIdRef.current !== event.pointerId || !gridDragSourceIdRef.current) return;
-      updateGridPointerDragFromPoint(event.clientX, event.clientY);
-      if (gridDragStartedRef.current) {
-        event.preventDefault();
-        event.stopPropagation();
-      }
-    };
-
-    const handleUp = (event: PointerEvent) => {
-      if (gridPointerIdRef.current !== event.pointerId || !gridDragSourceIdRef.current) return;
-      if (gridDragStartedRef.current) {
-        event.preventDefault();
-        event.stopPropagation();
-        gridSuppressClickUntilRef.current = Date.now() + 350;
-        commitGridPointerReorder();
-      } else {
-        cleanupGridPointerDrag();
-      }
-    };
-
-    const handleCancel = (event: PointerEvent) => {
-      if (gridPointerIdRef.current !== event.pointerId || !gridDragSourceIdRef.current) return;
-      cleanupGridPointerDrag();
-    };
-
-    const handleBlur = () => {
-      if (gridDragSourceIdRef.current) {
-        cleanupGridPointerDrag();
-      }
-    };
-
-    gridGlobalPointerHandlersRef.current = {
-      move: handleMove,
-      up: handleUp,
-      cancel: handleCancel,
-      blur: handleBlur
-    };
-
-    window.addEventListener('pointermove', handleMove, { capture: true, passive: false });
-    window.addEventListener('pointerup', handleUp, { capture: true, passive: false });
-    window.addEventListener('pointercancel', handleCancel, { capture: true, passive: true });
-    window.addEventListener('blur', handleBlur, true);
-  };
-
-  const beginGridPointerDrag = (event: React.PointerEvent<HTMLDivElement>, music: MusicFile, index: number) => {
-    if (event.button !== 0) return;
-    const target = event.target as HTMLElement | null;
-    if (target?.closest('button, input, textarea, select, [data-no-grid-drag="true"]')) return;
-
-    gridPendingPointerRef.current = {
-      x: event.clientX,
-      y: event.clientY,
-      id: music.id,
-      index
-    };
-    gridPointerIdRef.current = event.pointerId;
-    gridDragSourceIdRef.current = music.id;
-    gridDragSourceIndexRef.current = index;
-    gridDragSourceElementRef.current = event.currentTarget;
-    setGridInsertTargetIndex(index);
-    addGridGlobalPointerHandlers();
-
-    try {
-      event.currentTarget.setPointerCapture(event.pointerId);
-    } catch {
-      // Pointer capture is best-effort in older Chromium/Electron builds.
-    }
-  };
-
-  const updateGridPointerDrag = (event: React.PointerEvent<HTMLDivElement>, music: MusicFile) => {
-    if (gridPointerIdRef.current !== event.pointerId || gridDragSourceIdRef.current !== music.id) return;
-
-    updateGridPointerDragFromPoint(event.clientX, event.clientY, event.currentTarget);
-
-    if (gridDragStartedRef.current) {
-      event.preventDefault();
-      event.stopPropagation();
-    }
-  };
-
-  const endGridPointerDrag = (event: React.PointerEvent<HTMLDivElement>, music: MusicFile) => {
-    if (gridPointerIdRef.current !== event.pointerId || gridDragSourceIdRef.current !== music.id) return;
-
-    try {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    } catch {
-      // Pointer capture may already be released.
-    }
-
-    if (gridDragStartedRef.current) {
-      event.preventDefault();
-      event.stopPropagation();
-      commitGridPointerReorder();
-    } else {
-      cleanupGridPointerDrag();
-    }
-  };
-
-  const cancelGridPointerDrag = (event: React.PointerEvent<HTMLDivElement>, music: MusicFile) => {
-    if (gridPointerIdRef.current !== event.pointerId || gridDragSourceIdRef.current !== music.id) return;
-    cleanupGridPointerDrag();
   };
 
   const isFileDragEvent = (event: React.DragEvent) => {
@@ -796,11 +601,11 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
           e.stopPropagation();
           return;
         }
-        if (gridDragStartedRef.current) return;
+        if (gridDraggingId) return;
         handleSelect(music.id, e);
       }}
       onDoubleClick={(event) => {
-        if (gridDragStartedRef.current) return;
+        if (gridDraggingId) return;
         event.preventDefault();
         event.stopPropagation();
         onPlayMusic(music, { restartSame: true });
@@ -1033,54 +838,66 @@ export const ImprovedMusicList: React.FC<ImprovedMusicListProps> = ({
             </div>
           </div>
         ) : (
-          <>
-            <div
-              id="music-grid-container"
-              className="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-7 gap-3 relative"
-            >
-              {sortedMusicFiles.map((music, index) => (
+          <DragDropContext
+            autoScrollerOptions={{
+              startFromPercentage: 0.12,
+              maxScrollAtPercentage: 0.02,
+              maxPixelScroll: 24
+            }}
+            onDragUpdate={handleDragUpdate}
+            onDragStart={(start) => {
+              document.body.style.userSelect = 'none';
+              gridDragSourceIdRef.current = start.draggableId;
+              dragInsertIndexRef.current = null;
+              setGridDraggingId(start.draggableId);
+              setGridInsertTargetIndex(null);
+              startSortingAutoScroll(start.draggableId);
+            }}
+            onDragEnd={handleDragEnd}
+          >
+            <Droppable droppableId="music-grid" direction="horizontal" type="music-grid">
+              {(provided, snapshot) => (
                 <div
-                  key={music.id}
-                  data-grid-sort-item="true"
-                  data-grid-index={index}
-                  data-grid-id={music.id}
-                  className="relative min-w-0 touch-none"
-                  onPointerDown={(event) => beginGridPointerDrag(event, music, index)}
-                  onPointerMove={(event) => updateGridPointerDrag(event, music)}
-                  onPointerUp={(event) => endGridPointerDrag(event, music)}
-                  onPointerCancel={(event) => cancelGridPointerDrag(event, music)}
-                  onDragStart={(event) => event.preventDefault()}
-                  draggable={false}
-                  style={{ opacity: gridDraggingId === music.id ? 0.35 : 1 }}
+                  ref={provided.innerRef}
+                  {...provided.droppableProps}
+                  id="music-grid-container"
+                  className={`flex flex-wrap gap-3 relative content-start ${
+                    snapshot.isDraggingOver ? 'bg-blue-50/30 rounded-lg' : ''
+                  }`}
                 >
-                  {gridDraggingId && gridInsertIndex === index && gridDraggingId !== music.id && (
-                    <div className="absolute inset-x-0 -top-1 h-1 rounded-full bg-blue-500 shadow-sm z-10" />
+                  {sortedMusicFiles.map((music, index) => (
+                    <Draggable key={music.id} draggableId={music.id} index={index}>
+                      {(dragProvided, dragSnapshot) => (
+                        <div
+                          ref={dragProvided.innerRef}
+                          {...dragProvided.draggableProps}
+                          {...dragProvided.dragHandleProps}
+                          data-grid-sort-item="true"
+                          data-grid-index={index}
+                          data-grid-id={music.id}
+                          className="relative basis-[calc(33.333%_-_0.5rem)] md:basis-[calc(25%_-_0.625rem)] lg:basis-[calc(16.666%_-_0.625rem)] xl:basis-[calc(14.285%_-_0.625rem)] min-w-0 touch-none"
+                          style={{
+                            ...dragProvided.draggableProps.style,
+                            opacity: dragSnapshot.isDragging ? 0.92 : 1,
+                            zIndex: dragSnapshot.isDragging ? 1000 : (dragProvided.draggableProps.style as any)?.zIndex
+                          }}
+                        >
+                          {gridDraggingId && gridInsertIndex === index && gridDraggingId !== music.id && (
+                            <div className="absolute inset-x-0 -top-1 h-1 rounded-full bg-blue-500 shadow-sm z-10" />
+                          )}
+                          {renderGridCard(music, dragSnapshot.isDragging)}
+                        </div>
+                      )}
+                    </Draggable>
+                  ))}
+                  {provided.placeholder}
+                  {gridDraggingId && gridInsertIndex === sortedMusicFiles.length && (
+                    <div className="basis-full h-1 rounded-full bg-blue-500 shadow-sm" />
                   )}
-                  {renderGridCard(music)}
                 </div>
-              ))}
-              {gridDraggingId && gridInsertIndex === sortedMusicFiles.length && (
-                <div className="col-span-full h-1 rounded-full bg-blue-500 shadow-sm" />
               )}
-            </div>
-            {gridDragPreview && (() => {
-              const previewMusic = sortedMusicFiles.find((music) => music.id === gridDragPreview.id);
-              if (!previewMusic) return null;
-              return (
-                <div
-                  className="fixed pointer-events-none z-[10000]"
-                  style={{
-                    left: gridDragPreview.x - gridDragPreview.width / 2,
-                    top: gridDragPreview.y - gridDragPreview.height / 2,
-                    width: gridDragPreview.width,
-                    height: gridDragPreview.height
-                  }}
-                >
-                  {renderGridCard(previewMusic, true)}
-                </div>
-              );
-            })()}
-          </>
+            </Droppable>
+          </DragDropContext>
         )}
       </div>
     );

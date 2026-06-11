@@ -1,11 +1,16 @@
 !macro customInstall
+  Delete "$PROFILE\Desktop\YIYU.lnk"
+  Delete "$APPDATA\Microsoft\Windows\Start Menu\Programs\YIYU.lnk"
+  Delete "$DESKTOP\YIYU.lnk"
+  Delete "$SMPROGRAMS\YIYU.lnk"
+
   CreateDirectory "$PROFILE\Desktop"
-  CreateShortCut "$PROFILE\Desktop\YIYU.lnk" "$appExe" "" "$appExe" 0 "" "" "YIYU"
+  CreateShortCut "$PROFILE\Desktop\YIYU.lnk" "$appExe" "" "$INSTDIR\resources\app-icon.ico" 0 "" "" "YIYU"
   ClearErrors
   WinShell::SetLnkAUMI "$PROFILE\Desktop\YIYU.lnk" "${APP_ID}"
 
   CreateDirectory "$APPDATA\Microsoft\Windows\Start Menu\Programs"
-  CreateShortCut "$APPDATA\Microsoft\Windows\Start Menu\Programs\YIYU.lnk" "$appExe" "" "$appExe" 0 "" "" "YIYU"
+  CreateShortCut "$APPDATA\Microsoft\Windows\Start Menu\Programs\YIYU.lnk" "$appExe" "" "$INSTDIR\resources\app-icon.ico" 0 "" "" "YIYU"
   ClearErrors
   WinShell::SetLnkAUMI "$APPDATA\Microsoft\Windows\Start Menu\Programs\YIYU.lnk" "${APP_ID}"
 
@@ -16,6 +21,7 @@
   FileWrite $0 "Start-Sleep -Seconds 4$\r$\n"
   FileWrite $0 "$$target = '$appExe'$\r$\n"
   FileWrite $0 "$$workDir = '$INSTDIR'$\r$\n"
+  FileWrite $0 "$$icon = [System.IO.Path]::Combine($$workDir, 'resources', 'app-icon.ico')$\r$\n"
   FileWrite $0 "$$wsh = New-Object -ComObject WScript.Shell$\r$\n"
   FileWrite $0 "$$links = @($\r$\n"
   FileWrite $0 "  [System.IO.Path]::Combine([Environment]::GetFolderPath('Desktop'), 'YIYU.lnk'),$\r$\n"
@@ -27,7 +33,7 @@
   FileWrite $0 "  $$shortcut = $$wsh.CreateShortcut($$link)$\r$\n"
   FileWrite $0 "  $$shortcut.TargetPath = $$target$\r$\n"
   FileWrite $0 "  $$shortcut.WorkingDirectory = $$workDir$\r$\n"
-  FileWrite $0 "  $$shortcut.IconLocation = $$target + ',0'$\r$\n"
+  FileWrite $0 "  $$shortcut.IconLocation = $$icon + ',0'$\r$\n"
   FileWrite $0 "  $$shortcut.Description = 'YIYU'$\r$\n"
   FileWrite $0 "  $$shortcut.Save()$\r$\n"
   FileWrite $0 "}$\r$\n"
@@ -37,10 +43,10 @@
   ClearErrors
 
   SetShellVarContext all
-  CreateShortCut "$DESKTOP\YIYU.lnk" "$appExe" "" "$appExe" 0 "" "" "YIYU"
+  CreateShortCut "$DESKTOP\YIYU.lnk" "$appExe" "" "$INSTDIR\resources\app-icon.ico" 0 "" "" "YIYU"
   ClearErrors
   WinShell::SetLnkAUMI "$DESKTOP\YIYU.lnk" "${APP_ID}"
-  CreateShortCut "$SMPROGRAMS\YIYU.lnk" "$appExe" "" "$appExe" 0 "" "" "YIYU"
+  CreateShortCut "$SMPROGRAMS\YIYU.lnk" "$appExe" "" "$INSTDIR\resources\app-icon.ico" 0 "" "" "YIYU"
   ClearErrors
   WinShell::SetLnkAUMI "$SMPROGRAMS\YIYU.lnk" "${APP_ID}"
   SetShellVarContext current

@@ -983,21 +983,29 @@ class ConsoleRecordingManager {
           }
         }
         
-        // 根据输出格式构建参数
+        const safeSampleRate = options.sampleRate || 48000;
+        const safeChannels = Math.max(1, Math.min(options.channels || 1, 2));
+        const safeBitDepth = [16, 24, 32].includes(options.bitDepth) ? options.bitDepth : 16;
+
+        // macOS avfoundation can occasionally produce timestamp jitter and clipped voice peaks.
+        // Keep capture at a stable rate, smooth timestamps, lower hot input, then hard-limit peaks.
         const audioFilters = [
-          `aresample=${options.sampleRate}:async=1:first_pts=0`
+          `aresample=${safeSampleRate}:async=1000:first_pts=0`,
+          'highpass=f=60',
+          'lowpass=f=18000',
+          'volume=0.70',
+          'alimiter=limit=0.89:attack=5:release=80:level=false'
         ].join(',');
         const baseArgs = [
           '-hide_banner',
           '-loglevel', 'warning',
-          '-thread_queue_size', '2048',
-          '-use_wallclock_as_timestamps', '1',
+          '-thread_queue_size', '4096',
           '-f', 'avfoundation',
           '-i', audioInput,
           '-fflags', '+genpts',
           '-af', audioFilters,
-          '-ar', options.sampleRate.toString(),
-          '-ac', options.channels.toString()
+          '-ar', safeSampleRate.toString(),
+          '-ac', safeChannels.toString()
         ];
 
         // 根据输出格式添加不同的编码参数
@@ -1021,7 +1029,7 @@ class ConsoleRecordingManager {
           // WAV格式
           ffmpegArgs = [
             ...baseArgs,
-            '-codec:a', 'pcm_s' + options.bitDepth + 'le',
+            '-codec:a', 'pcm_s' + safeBitDepth + 'le',
             '-y',
             options.outputPath
           ];
@@ -1207,7 +1215,7 @@ class ConsoleRecordingManager {
           console.error('FFmpeg命令:', this.getFFmpegPath(), ffmpegArgs.join(' '));
           console.error('FFmpeg错误输出:', errorOutput);
           this.terminateRecordingProcess(processRef);
-          failStartup(new Error(`录音启动超时 - 可能需要麦克风权限\n命令: ${ffmpegArgs.join(' ')}\n错误: ${errorOutput}`));
+          failStartup(new Error('录音启动超时。请确认已授予麦克风权限，并重新选择录音设备后再试。'));
         }
       }, 15000);
     });
@@ -1372,11 +1380,26 @@ class ConsoleRecordingManager {
       this.deviceCheckInterval = null;
     }
     
-    // 退出应用时必须停止FFmpeg，确保macOS麦克风占用能释放
+    // 退出应用时必须立即通知FFmpeg结束，确保macOS麦克风占用能释放
     const proc = this.recordingProcess;
     if (proc && !proc.killed && proc.exitCode === null) {
       this.isStoppingRecording = true;
-      this.terminateRecordingProcess(proc, true);
+      try {
+        if (proc.stdin && !proc.stdin.destroyed && proc.stdin.writable) {
+          proc.stdin.write('q');
+          proc.stdin.end();
+        }
+      } catch {}
+      try {
+        proc.kill('SIGINT');
+      } catch {}
+      if (process.platform === 'darwin') {
+        try {
+          proc.kill('SIGTERM');
+        } catch {}
+      } else {
+        this.terminateRecordingProcess(proc, true);
+      }
       setTimeout(() => {
         if (this.recordingProcess === proc) {
           this.recordingProcess = null;
