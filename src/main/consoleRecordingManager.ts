@@ -983,26 +983,36 @@ class ConsoleRecordingManager {
           }
         }
         
-        const safeSampleRate = options.sampleRate || 48000;
+        // Keep macOS capture on CoreAudio's common native rate. Letting users pick
+        // 96 kHz here made avfoundation more likely to drift or crackle on line-in.
+        const safeSampleRate = 48000;
         const safeChannels = Math.max(1, Math.min(options.channels || 1, 2));
-        const safeBitDepth = [16, 24, 32].includes(options.bitDepth) ? options.bitDepth : 16;
+        const safeBitDepth = [16, 24, 32].includes(options.bitDepth) ? options.bitDepth : 24;
 
-        // macOS avfoundation can occasionally produce timestamp jitter and clipped voice peaks.
-        // Keep capture at a stable rate, smooth timestamps, lower hot input, then hard-limit peaks.
+        // macOS line-in/mic devices can arrive hot enough to clip, which sounds like
+        // electrical pops. Process in float, repair clipped/clicked samples, then
+        // keep generous headroom before writing the final file.
         const audioFilters = [
-          `aresample=${safeSampleRate}:async=1000:first_pts=0`,
+          'aformat=sample_fmts=fltp',
+          `aresample=${safeSampleRate}:async=1:first_pts=0:min_hard_comp=0.100:comp_duration=0.500:max_soft_comp=0.100`,
+          'adeclip=threshold=8:window=55:overlap=75:arorder=8',
+          'adeclick=threshold=4:window=55:overlap=75:arorder=2:burst=2',
           'highpass=f=60',
           'lowpass=f=18000',
-          'volume=0.70',
-          'alimiter=limit=0.89:attack=5:release=80:level=false'
+          'volume=0.55',
+          'acompressor=threshold=0.20:ratio=8:attack=1:release=80:makeup=1:knee=4:detection=peak:link=maximum',
+          'alimiter=limit=0.78:attack=2:release=80:level=false',
+          `aresample=${safeSampleRate}`
         ].join(',');
         const baseArgs = [
           '-hide_banner',
           '-loglevel', 'warning',
           '-thread_queue_size', '4096',
+          '-use_wallclock_as_timestamps', '1',
+          '-fflags', '+genpts',
           '-f', 'avfoundation',
           '-i', audioInput,
-          '-fflags', '+genpts',
+          '-vn',
           '-af', audioFilters,
           '-ar', safeSampleRate.toString(),
           '-ac', safeChannels.toString()

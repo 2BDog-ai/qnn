@@ -88,7 +88,7 @@ export const ConsoleRecordingModal: React.FC<ConsoleRecordingModalProps> = ({
     if (platform === 'darwin') {
       setSampleRate(48000);
       setChannels(1);
-      setBitDepth(16);
+      setBitDepth(24);
     } else {
       setSampleRate(44100);
       setChannels(1);
