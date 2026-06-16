@@ -59,6 +59,7 @@ export const ConsoleRecordingModal: React.FC<ConsoleRecordingModalProps> = ({
       if (topNav) {
         (topNav.style as any)['-webkit-app-region'] = 'no-drag';
       }
+      return;
       // Check microphone permission on Mac
       if (navigator.userAgent.includes('Macintosh') && navigator.mediaDevices) {
         navigator.mediaDevices.getUserMedia({ audio: true })

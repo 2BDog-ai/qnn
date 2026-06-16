@@ -901,6 +901,12 @@ function ImprovedApp() {
         // 移除成功提示，减少打扰
       }
     } catch (error) {
+      if (isMacOS()) {
+        await cancelBrowserRecording();
+        setIsRecordingStarting(false);
+        setIsGlobalRecording(false);
+        clearRecordingTimer();
+      }
       console.error('停止录音失败:', error);
       notify.error('停止录音失败', '无法停止录音');
     }

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, shell, protocol, Menu } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, shell, protocol, Menu, session } from 'electron';
 // 设定中文区域与语言优先级，影响系统对话框/侧边栏语言
 process.env.LC_ALL = 'zh_CN.UTF-8';
 process.env.LANG = 'zh_CN.UTF-8';
@@ -455,6 +455,16 @@ function setChineseApplicationMenu() {
 
 // 应用准备就绪
 app.whenReady().then(async () => {
+  session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback, details) => {
+    if (permission === 'media') {
+      const mediaTypes = details?.mediaTypes || [];
+      callback(mediaTypes.length === 0 || mediaTypes.includes('audio'));
+      return;
+    }
+
+    callback(false);
+  });
+
   // 注册自定义协议处理本地文件
   protocol.registerFileProtocol('local-resource', (request, callback) => {
     const url = request.url.substr(17); // 移除 'local-resource://'
