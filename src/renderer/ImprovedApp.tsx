@@ -14,6 +14,7 @@ import { PlaylistCreateModal } from './components/PlaylistCreateModal';
 import { NotificationSystem, useNotifications } from './components/NotificationSystem';
 import { Playlist, SortOrder } from './types';
 import { readAudioMetadata } from './utils/audioMetadata';
+import { startBrowserRecording, stopBrowserRecording, cancelBrowserRecording, isBrowserRecordingActive } from './utils/webAudioRecording';
 import { Dialog, Transition } from '@headlessui/react';
 // import Store from 'electron-store'; // Remove this
 
@@ -695,6 +696,8 @@ function ImprovedApp() {
   const recordingTimerRef = useRef<NodeJS.Timeout | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [highlightedId, setHighlightedId] = useState<string | null>(null);
+
+  const isMacOS = () => window.electronAPI?.system?.getPlatform?.() === 'darwin';
   
   // 音乐播放状态
   const [currentMusic, setCurrentMusic] = useState<MusicFile | null>(null);
@@ -878,6 +881,15 @@ function ImprovedApp() {
   // 手动停止录音
   const handleGlobalStopRecording = async () => {
     try {
+      if (isMacOS() && isBrowserRecordingActive()) {
+        await stopBrowserRecording();
+        setIsRecordingStarting(false);
+        setIsGlobalRecording(false);
+        clearRecordingTimer();
+        notify.success('录音已保存', globalRecordingPath || '录音文件已保存');
+        return;
+      }
+
       if (window.electronAPI?.consoleRecording?.stop) {
         const result = await window.electronAPI.consoleRecording.stop();
         if (!result.success) {
@@ -3060,6 +3072,18 @@ function ImprovedApp() {
         notify.warning('录音正在进行', '请先停止当前录音后再开始新的录音');
         return;
       }
+      if (isMacOS()) {
+        setIsRecordingStarting(true);
+        setGlobalRecordingPath(options.outputPath || '');
+        await startBrowserRecording(options);
+        setIsRecordingStarting(false);
+        setIsGlobalRecording(true);
+        setGlobalRecordingPath(options.outputPath || '');
+        startRecordingTimer(0);
+        notify.success('录音已开始', 'macOS 录音正在进行');
+        return;
+      }
+
       if (window.electronAPI?.consoleRecording?.start) {
         setIsRecordingStarting(true);
         setGlobalRecordingPath(options.outputPath || '');
@@ -3076,8 +3100,10 @@ function ImprovedApp() {
       }
     } catch (error) {
       setIsRecordingStarting(false);
+      setIsGlobalRecording(false);
+      await cancelBrowserRecording();
       console.error('开始录音失败:', error);
-      notify.error('录音失败', '无法开始录音');
+      notify.error('录音失败', error instanceof Error ? error.message : '无法开始录音');
     }
   };
 

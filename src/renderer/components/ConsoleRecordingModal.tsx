@@ -88,7 +88,10 @@ export const ConsoleRecordingModal: React.FC<ConsoleRecordingModalProps> = ({
     if (platform === 'darwin') {
       setSampleRate(48000);
       setChannels(1);
-      setBitDepth(24);
+      setBitDepth(16);
+      setOutputFormat('wav');
+      setAudioDevices([{ id: 'system-default', name: '系统默认输入设备', type: 'input' }]);
+      setSelectedDevice('system-default');
     } else {
       setSampleRate(44100);
       setChannels(1);
@@ -109,6 +112,11 @@ export const ConsoleRecordingModal: React.FC<ConsoleRecordingModalProps> = ({
     }
 
     // 加载音频设备
+    if (platform === 'darwin') {
+      setIsLoading(false);
+      return;
+    }
+
     await loadAudioDevices();
   };
 
