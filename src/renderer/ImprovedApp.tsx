@@ -3479,7 +3479,7 @@ function ImprovedApp() {
         );
       case 'audio-editor':
         return (
-          <div className="h-full min-h-full flex flex-col bg-gray-50 dark:bg-gray-900">
+          <div className="h-full min-h-0 flex flex-col bg-gray-50 dark:bg-gray-900 overflow-hidden">
             {/* 录音状态提示条 */}
             {isGlobalRecording && (
               <div className="m-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
@@ -3852,7 +3852,7 @@ function ImprovedApp() {
         {/* 主内容区域 */}
         <div className="flex-1 flex flex-col overflow-hidden">
           {/* 可滚动的内容区域 */}
-          <div className="flex-1 overflow-auto">
+          <div className={`flex-1 min-h-0 ${activeModule === 'audio-editor' ? 'overflow-hidden' : 'overflow-auto'}`}>
             {renderMainContent()}
           </div>
           

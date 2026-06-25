@@ -133,7 +133,7 @@
           ]
         }
       ],
-      "icon": "public/app-icon.png",
+      "icon": "build/app-icon.icns",
       "electronLanguages": [
         "zh-CN",
         "zh",
@@ -195,7 +195,7 @@
     },
     "dmg": {
       "title": "YIYU",
-      "icon": "public/app-icon.png",
+      "icon": "build/app-icon.icns",
       "contents": [
         {
           "x": 130,

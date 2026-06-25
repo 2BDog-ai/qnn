@@ -817,9 +817,9 @@ export const AudioEditor: React.FC<AudioEditorProps> = ({ musicId, sourcePlaylis
   const progressPercent = duration > 0 ? clamp((currentTime / duration) * 100, 0, 100) : 0;
 
   return (
-    <div className="min-h-full h-full flex flex-col bg-gray-50">
-      <div className="flex-1 max-w-7xl mx-auto w-full p-3 min-h-0">
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 h-full flex flex-col overflow-hidden">
+    <div className="h-full min-h-0 flex flex-col bg-gray-50 overflow-hidden">
+      <div className="flex-1 max-w-7xl mx-auto w-full p-3 min-h-0 flex">
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 flex-1 min-h-0 flex flex-col overflow-hidden">
           <div className="border-b border-gray-200 px-4 py-2">
             <div className="flex items-center justify-between gap-4">
               <div className="flex items-center gap-3 min-w-0">
@@ -1011,12 +1011,12 @@ export const AudioEditor: React.FC<AudioEditorProps> = ({ musicId, sourcePlaylis
             </div>
           )}
 
-          <div className="flex-1 px-3 py-2 min-h-0 overflow-hidden">
+          <div className="flex-1 px-3 py-2 min-h-0 overflow-y-auto overflow-x-hidden">
             <div className="h-full min-h-0 flex flex-col gap-1.5">
               <div
                 ref={canvasContainerRef}
-                className="relative bg-gray-50 rounded-lg border border-gray-200 overflow-hidden flex-none"
-                style={audioFile ? { height: '14vh', minHeight: 86, maxHeight: 150 } : { minHeight: 220 }}
+                className="relative bg-gray-50 rounded-lg border border-gray-200 overflow-hidden flex-1 min-h-[120px] max-h-[220px]"
+                style={audioFile ? { flexBasis: 150 } : { minHeight: 220 }}
               >
                 <canvas
                   ref={canvasRef}

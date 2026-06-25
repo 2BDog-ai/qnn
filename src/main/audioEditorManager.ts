@@ -164,14 +164,17 @@ export class AudioEditorManager {
     // 选择音频文件
     ipcMain.handle('audio-editor:selectFile', async () => {
       if (!this.mainWindow) return null;
-      
-      const result = await dialog.showOpenDialog(this.mainWindow, {
+
+      const options = {
         properties: ['openFile'],
         filters: [
           { name: '音频文件', extensions: ['mp3', 'wav', 'flac', 'm4a', 'aac', 'ogg', 'wma', 'opus'] },
           { name: '所有文件', extensions: ['*'] }
         ]
-      });
+      } as Electron.OpenDialogOptions;
+      const result = process.platform === 'darwin'
+        ? await dialog.showOpenDialog(options)
+        : await dialog.showOpenDialog(this.mainWindow, options);
       
       return result.canceled ? null : result.filePaths[0];
     });
@@ -179,13 +182,16 @@ export class AudioEditorManager {
     // 选择保存位置 - 仅限MP3格式
     ipcMain.handle('audio-editor:selectSaveLocation', async (event, defaultName: string) => {
       if (!this.mainWindow) return null;
-      
-      const result = await dialog.showSaveDialog(this.mainWindow, {
+
+      const options = {
         defaultPath: defaultName,
         filters: [
           { name: 'MP3音频', extensions: ['mp3'] }
         ]
-      });
+      } as Electron.SaveDialogOptions;
+      const result = process.platform === 'darwin'
+        ? await dialog.showSaveDialog(options)
+        : await dialog.showSaveDialog(this.mainWindow, options);
       
       return result.canceled ? null : result.filePath;
     });
