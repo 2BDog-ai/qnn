@@ -37,7 +37,7 @@ jobs:
           node-version: '22'
 
       - name: Install dependencies
-        run: npm install
+        run: npm install --legacy-peer-deps
 
       - name: Prepare macOS FFmpeg
         run: node scripts/ensure-ffmpeg-mac.js
