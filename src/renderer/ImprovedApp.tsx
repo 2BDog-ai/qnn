@@ -3789,15 +3789,29 @@ function ImprovedApp() {
     }
   };
 
-  const copyText = (text: string) => {
+  const copyText = async (text: string) => {
     if (!text) return;
-    navigator.clipboard
-      .writeText(text)
-      .then(() => {
-        // 移除复制成功提示，减少打扰
+
+    try {
+      if (window.electronAPI?.clipboard?.writeText) {
+        const result = await window.electronAPI.clipboard.writeText(text);
+        if (result?.success) {
+          console.log('已复制到剪贴板:', text);
+          return;
+        }
+      }
+
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
         console.log('已复制到剪贴板:', text);
-      })
-      .catch(() => toast.error('复制失败'));
+        return;
+      }
+
+      throw new Error('No clipboard API available');
+    } catch (error) {
+      console.error('复制失败:', error);
+      toast.error('复制失败');
+    }
   };
 
   return (

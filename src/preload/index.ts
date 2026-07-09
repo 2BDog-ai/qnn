@@ -395,6 +395,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     clear: () => ipcRenderer.invoke('storage:clear'),
     keys: () => ipcRenderer.invoke('storage:keys'),
   },
+  clipboard: {
+    writeText: (text: string) => ipcRenderer.invoke('clipboard:writeText', text),
+  },
   vocalRemover: vocalRemoverAPI,
   consoleRecording: consoleRecordingAPI,
   handCard: handCardAPI,

@@ -106,6 +106,9 @@ declare global {
         set: (key: string, value: any) => Promise<void>;
         delete: (key: string) => Promise<void>;
       };
+      clipboard?: {
+        writeText: (text: string) => Promise<{ success: boolean; error?: string }>;
+      };
       vocalRemover?: any;
       consoleRecording?: any;
       handCard?: any;

@@ -208,42 +208,14 @@ export const MusicIcon: React.FC<{ className?: string; size?: number }> = ({ cla
 );
 
 export const MicrophoneIcon: React.FC<{ className?: string; size?: number }> = ({ className = "", size = 24 }) => (
-  <svg 
-    width={size} 
-    height={size} 
-    viewBox="0 0 24 24" 
-    fill="none" 
-    className={className}
-  >
-    <path 
-      d="M12 1A3 3 0 0 1 15 4V11A3 3 0 0 1 12 14A3 3 0 0 1 9 11V4A3 3 0 0 1 12 1Z" 
-      stroke="currentColor" 
-      strokeWidth="2" 
-      strokeLinecap="round" 
-      strokeLinejoin="round"
-    />
-    <path 
-      d="M19 10V11A7 7 0 0 1 12 18A7 7 0 0 1 5 11V10" 
-      stroke="currentColor" 
-      strokeWidth="2" 
-      strokeLinecap="round" 
-      strokeLinejoin="round"
-    />
-    <path 
-      d="M12 19V23" 
-      stroke="currentColor" 
-      strokeWidth="2" 
-      strokeLinecap="round" 
-      strokeLinejoin="round"
-    />
-    <path 
-      d="M8 23H16" 
-      stroke="currentColor" 
-      strokeWidth="2" 
-      strokeLinecap="round" 
-      strokeLinejoin="round"
-    />
-  </svg>
+  <img
+    src="./microphone-icon.jpg"
+    alt=""
+    width={size}
+    height={size}
+    className={`inline-block object-contain ${className}`}
+    draggable={false}
+  />
 );
 
 // 转换图标
@@ -995,13 +967,18 @@ export const VolumeIcon: React.FC<{ className?: string; size?: number }> = ({ cl
 
 // Remove Vocals Icon (Microphone with slash)
 export const RemoveVocalsIcon: React.FC<{ className?: string; size?: number }> = ({ className = "", size = 24 }) => (
-  <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M12 1A3 3 0 0 1 15 4V11A3 3 0 0 1 12 14A3 3 0 0 1 9 11V4A3 3 0 0 1 12 1Z" />
-    <path d="M19 10V11A7 7 0 0 1 12 18A7 7 0 0 1 5 11V10" />
-    <path d="M12 19V23" />
-    <path d="M8 23H16" />
-    <line x1="3" y1="3" x2="21" y2="21" strokeWidth="2.5" />
-  </svg>
+  <span
+    className={`relative inline-block ${className}`}
+    style={{ width: size, height: size }}
+  >
+    <img
+      src="./microphone-icon.jpg"
+      alt=""
+      className="h-full w-full object-contain"
+      draggable={false}
+    />
+    <span className="absolute left-0 top-1/2 h-0.5 w-full -translate-y-1/2 rotate-45 rounded-full bg-current shadow-[0_0_0_1px_rgba(255,255,255,0.75)]" />
+  </span>
 );
 
 // Cloud Upload Icon

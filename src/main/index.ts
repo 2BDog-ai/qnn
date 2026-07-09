@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, shell, protocol, Menu, session } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, shell, protocol, Menu, session, clipboard } from 'electron';
 // 设定中文区域与语言优先级，影响系统对话框/侧边栏语言
 process.env.LC_ALL = 'zh_CN.UTF-8';
 process.env.LANG = 'zh_CN.UTF-8';
@@ -1340,6 +1340,16 @@ safeIpcHandle('getMACAddress', async () => {
     console.error('获取MAC地址失败:', error);
     // 在网络异常时返回null而不是抛出异常，让调用方处理
     return null;
+  }
+});
+
+safeIpcHandle('clipboard:writeText', (_event, text: string) => {
+  try {
+    clipboard.writeText(String(text ?? ''));
+    return { success: true };
+  } catch (error) {
+    console.error('Clipboard write failed:', error);
+    return { success: false, error: error instanceof Error ? error.message : String(error) };
   }
 });
 
