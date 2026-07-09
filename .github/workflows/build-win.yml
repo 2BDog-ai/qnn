@@ -7,6 +7,9 @@ on:
       - main
       - master
 
+permissions:
+  contents: write
+
 jobs:
   build-windows:
     name: Build Windows x64 Package
@@ -42,3 +45,15 @@ jobs:
             release/*.exe
             release/*.blockmap
           if-no-files-found: error
+
+      - name: Publish Windows package to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: windows-latest
+          name: Latest Windows Build
+          prerelease: true
+          make_latest: false
+          overwrite_files: true
+          files: |
+            release/*.exe
+            release/*.blockmap

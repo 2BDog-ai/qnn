@@ -7,6 +7,9 @@ on:
       - main
       - master
 
+permissions:
+  contents: write
+
 jobs:
   build-macos:
     name: Build macOS ${{ matrix.arch }} Package
@@ -125,3 +128,13 @@ jobs:
           path: |
             release/*.dmg
           if-no-files-found: error
+
+      - name: Publish macOS package to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: macos-latest
+          name: Latest macOS Build
+          prerelease: true
+          make_latest: false
+          overwrite_files: true
+          files: release/*.dmg
