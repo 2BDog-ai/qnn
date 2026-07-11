@@ -209,7 +209,7 @@ export const MusicIcon: React.FC<{ className?: string; size?: number }> = ({ cla
 
 export const MicrophoneIcon: React.FC<{ className?: string; size?: number }> = ({ className = "", size = 24 }) => (
   <img
-    src="./microphone-icon.jpg"
+    src="./microphone-icon.png"
     alt=""
     width={size}
     height={size}
@@ -972,7 +972,7 @@ export const RemoveVocalsIcon: React.FC<{ className?: string; size?: number }> =
     style={{ width: size, height: size }}
   >
     <img
-      src="./microphone-icon.jpg"
+      src="./microphone-icon.png"
       alt=""
       className="h-full w-full object-contain"
       draggable={false}
