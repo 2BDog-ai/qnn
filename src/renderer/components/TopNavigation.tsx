@@ -3,6 +3,7 @@ import { useThemeStore } from '../store/themeStore';
 import {
   MusicIcon,
   MicrophoneIcon,
+  RemoveVocalsIcon,
   ConvertIcon,
   MoreIcon,
   CutIcon,
@@ -63,7 +64,7 @@ export const TopNavigation: React.FC<TopNavigationProps> = ({
     {
       id: 'vocal-remover',
       name: '人声消除',
-      icon: ConvertIcon,
+      icon: RemoveVocalsIcon,
       description: '消除人声、保留伴奏'
     },
     {

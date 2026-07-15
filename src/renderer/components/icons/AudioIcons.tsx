@@ -209,7 +209,7 @@ export const MusicIcon: React.FC<{ className?: string; size?: number }> = ({ cla
 
 export const MicrophoneIcon: React.FC<{ className?: string; size?: number }> = ({ className = "", size = 24 }) => (
   <img
-    src="./microphone-icon.png"
+    src="./recording-icon.png"
     alt=""
     width={size}
     height={size}
@@ -967,18 +967,14 @@ export const VolumeIcon: React.FC<{ className?: string; size?: number }> = ({ cl
 
 // Remove Vocals Icon (Microphone with slash)
 export const RemoveVocalsIcon: React.FC<{ className?: string; size?: number }> = ({ className = "", size = 24 }) => (
-  <span
-    className={`relative inline-block ${className}`}
-    style={{ width: size, height: size }}
-  >
-    <img
-      src="./microphone-icon.png"
-      alt=""
-      className="h-full w-full object-contain"
-      draggable={false}
-    />
-    <span className="absolute left-0 top-1/2 h-0.5 w-full -translate-y-1/2 rotate-45 rounded-full bg-current shadow-[0_0_0_1px_rgba(255,255,255,0.75)]" />
-  </span>
+  <img
+    src="./vocal-remover-icon.png"
+    alt=""
+    width={size}
+    height={size}
+    className={`inline-block object-contain ${className}`}
+    draggable={false}
+  />
 );
 
 // Cloud Upload Icon
